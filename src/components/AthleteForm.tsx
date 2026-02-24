@@ -293,6 +293,19 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
       toast.error("Cash insert: " + (cashErr.message ?? "eroare necunoscută"));
     }
 
+    // If athlete was PER_SESSION and we created a COACHING subscription, auto-switch payment mode
+    if (athlete?.payment_mode === "PER_SESSION" && kind === "COACHING") {
+      const { error: pmErr } = await supabase
+        .from("athletes")
+        .update({ payment_mode: "SUBSCRIPTION" } as any)
+        .eq("id", athlete.id);
+      if (pmErr) {
+        console.warn("Failed to update payment_mode", pmErr);
+      } else {
+        toast.success(`${athlete.full_name} a fost trecut(ă) pe tip de plată Abonament. Pentru a reveni la "la ședință", intră în pagina Sportivi.`);
+      }
+    }
+
     toast.success("Abonament prelungit");
     queryClient.invalidateQueries({ queryKey: ["subs-history"] });
     queryClient.invalidateQueries({ queryKey: ["athletes"] });
