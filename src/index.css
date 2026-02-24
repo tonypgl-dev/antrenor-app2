@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Kalam:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 152 69% 41%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 92%;
+    --secondary-foreground: 220 25% 10%;
+
+    --muted: 220 15% 94%;
+    --muted-foreground: 220 10% 46%;
+
+    --accent: 38 92% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 88%;
+    --input: 220 13% 88%;
+    --ring: 152 69% 41%;
+
+    --radius: 0.75rem;
+
+    --success: 152 69% 41%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --expired: 0 72% 51%;
+    --expired-foreground: 0 0% 100%;
+    --inactive: 220 10% 72%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-hand: 'Kalam', cursive;
+  }
+
+  .dark {
+    --background: 220 20% 7%;
+    --foreground: 220 15% 93%;
+
+    --card: 220 20% 11%;
+    --card-foreground: 220 15% 93%;
+
+    --popover: 220 20% 11%;
+    --popover-foreground: 220 15% 93%;
+
+    --primary: 152 69% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 16%;
+    --secondary-foreground: 220 15% 93%;
+
+    --muted: 220 15% 16%;
+    --muted-foreground: 220 10% 55%;
+
+    --accent: 38 92% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 152 69% 45%;
+
+    --success: 152 69% 45%;
+    --warning: 38 92% 50%;
+    --expired: 0 72% 51%;
+    --inactive: 220 10% 40%;
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-display);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 700;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono) !important;
+  }
+}
+
+@layer utilities {
+  .status-dot {
+    @apply w-2.5 h-2.5 rounded-full inline-block;
+  }
+  .status-dot-active {
+    background-color: hsl(var(--success));
+  }
+  .status-dot-expiring {
+    background-color: hsl(var(--warning));
+  }
+  .status-dot-expired {
+    background-color: hsl(var(--expired));
+  }
+  .status-dot-inactive {
+    background-color: hsl(var(--inactive));
+  }
+
+  .athlete-row-should-present {
+    background-color: hsl(var(--success) / 0.08);
+  }
+  .athlete-row-present {
+    background-color: hsl(var(--success) / 0.2);
+    border-left: 3px solid hsl(var(--success));
+  }
+  .athlete-row-default {
+    background-color: hsl(var(--muted) / 0.5);
+  }
+
+  .payment-overlay {
+    @apply fixed inset-0 flex items-center justify-center z-50;
+    background: hsl(var(--background) / 0.85);
+    backdrop-filter: blur(8px);
+  }
+
+  .timer-display {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+}
