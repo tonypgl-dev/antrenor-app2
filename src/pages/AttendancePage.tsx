@@ -490,13 +490,48 @@ export default function AttendancePage() {
                   className="text-right text-[11px] leading-tight tabular-nums"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (!isPerSession) setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
+                    setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
                   }}
                   title={isPerSession ? 'Per ședință' : 'Tap pentru reînnoire'}
                 >
-                  <div className={statusTextClass(cStatus)}>C: {cText}</div>
+                  {!isPerSession && <div className={statusTextClass(cStatus)}>C: {cText}</div>}
                   <div className={statusTextClass(gStatus)}>F: {gText}</div>
                 </div>
+
+                {!isPerSession && cStatus === 'EXPIRED' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs font-bold"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
+                      // trigger directly
+                      renewSub.mutate({ athleteId: athlete.id, kind: 'COACHING', priceLei: 800, athleteName: athlete.full_name });
+                    }}
+                    disabled={renewSub.isPending}
+                    title="Reînnoire Coaching 800"
+                  >
+                    800
+                  </Button>
+                )}
+                {gStatus === 'EXPIRED' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs font-bold"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
+                      renewSub.mutate({ athleteId: athlete.id, kind: 'GYM', priceLei: 120, athleteName: athlete.full_name });
+                    }}
+                    disabled={renewSub.isPending}
+                    title="Reînnoire Gym 120"
+                  >
+                    120
+                  </Button>
+                )}
+
 
                 {isPerSession && isPresent && !isPaidSession && (
                   <Button

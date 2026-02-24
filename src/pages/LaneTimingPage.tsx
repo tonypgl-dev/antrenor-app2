@@ -118,7 +118,10 @@ export default function LaneTimingPage() {
   const { coach } = useCoach();
   const qc = useQueryClient();
 
-  const pressTimer = useRef<number | null>(null);
+    const pendingLapRef = useRef<Record<string, boolean>>({});
+  const retryLapEventIdRef = useRef<Record<string, { id: string; ts: number }>>({});
+
+const pressTimer = useRef<number | null>(null);
   const flashTick = useRef<number | null>(null);
 
   const [elapsed, setElapsed] = useState(0);
@@ -544,35 +547,56 @@ export default function LaneTimingPage() {
     const d = derived[a.id];
     if (d?.finished) return;
 
-    const elapsedMs = Date.now() - new Date(run.start_at).getTime();
+    const pendingKey = a.id;
+    if (pendingLapRef.current[pendingKey]) return;
+    pendingLapRef.current[pendingKey] = true;
 
-    // atomic insert via RPC
-    const { data, error } = await (supabase as any).rpc("add_lap_event_atomic", {
-      p_run_id: run.id,
-      p_lane_assignment_id: a.id,
-      p_elapsed_ms: elapsedMs,
-      p_coach: coach ?? "COACH",
-    });
+    // Reconnect edge-case:
+    // If the previous tap failed due to network, reuse the same client_event_id for retry,
+    // so we don't create duplicates when the connection comes back.
+    const nowTs = Date.now();
+    const existing = retryLapEventIdRef.current[pendingKey];
+    const clientEventId =
+      existing && nowTs - existing.ts < 30_000 ? existing.id : crypto.randomUUID();
 
-    if (error) {
-      console.error(error);
-      toast.error(`Lap nereușit: ${error.message ?? "Eroare"}`);
-      return;
+    try {
+      const elapsedMs = Date.now() - new Date(run.start_at).getTime();
+
+      const { data, error } = await (supabase as any).rpc("add_lap_event_atomic", {
+        p_run_id: run.id,
+        p_lane_assignment_id: a.id,
+        p_elapsed_ms: elapsedMs,
+        p_coach: coach ?? "COACH",
+        p_client_event_id: clientEventId,
+      });
+
+      if (error) {
+        console.error(error);
+        // Keep retry id only on likely network failures
+        const msg = String((error as any)?.message ?? "");
+        const isNetwork = msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("fetch");
+        if (isNetwork) retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
+        toast.error(`Lap nereușit: ${error.message ?? "Eroare"}`);
+        return;
+      }
+
+      // success: clear retry id
+      delete retryLapEventIdRef.current[pendingKey];
+
+      const inserted = (data as any)?.inserted;
+      if (!inserted) {
+        // duplicate or ignored event; no feedback
+        return;
+      }
+
+      // success feedback (only when inserted)
+      pushFlash(a.athletes?.full_name ?? "Sportiv");
+      setPulseId(a.id);
+      window.setTimeout(() => setPulseId(null), 500);
+      playBeep(80, 880);
+    } finally {
+      pendingLapRef.current[pendingKey] = false;
     }
-
-    const inserted = (data as any)?.inserted;
-    if (!inserted) {
-      // duplicate or ignored event; no feedback
-      return;
-    }
-
-    // success feedback (only when inserted)
-    pushFlash(a.athletes?.full_name ?? "Sportiv");
-    setPulseId(a.id);
-    window.setTimeout(() => setPulseId(null), 500);
-
-    // Audio feedback for lap
-    playBeep(80, 880);
   }
 
   async function undoLastLap(a: any) {
@@ -843,7 +867,7 @@ export default function LaneTimingPage() {
             const bufSec = d?.bufferMs != null ? d.bufferMs / 1000 : 0;
             const bufNorm = clamp((bufSec + 20) / 40, 0, 1);
 
-            const disabled = (run?.status !== "RUNNING" && !isRaceDone) || a.is_abandoned || d?.finished;
+            const disabled = (run?.status !== "RUNNING" && !isRaceDone) || a.is_abandoned || d?.finished || pendingLapRef.current[a.id] === true;
             const canEditName = settingsOpen && run?.status !== "RUNNING";
 
             const mainName = baseSecondName(a);
