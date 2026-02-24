@@ -344,19 +344,21 @@ export default function LaneTimingPage() {
       const lastEv = events[n - 1];
       const totalElapsedAtLast = n ? Number(lastEv.elapsed_ms) : 0;
 
-      // use highest recorded lap_number (not array position) for distance / finish
+      // use lap_number when present; otherwise fall back to event count
       const maxLapNumber = events.reduce(
         (max: number, ev: any) => Math.max(max, Number(ev.lap_number) || 0),
         0,
       );
+      const hasLapNumbers = events.some((ev: any) => ev.lap_number != null && Number(ev.lap_number) > 0);
+      const lapCountForDistance = hasLapNumbers ? maxLapNumber : events.length;
 
       // distance units done (in laps, can be 0.5 steps)
       let distanceDone = 0;
-      if (maxLapNumber > 0) {
+      if (lapCountForDistance > 0) {
         if (hasHalfFirstSplit) {
-          distanceDone = Math.min(lapsTotal, 0.5 + Math.max(0, maxLapNumber - 1));
+          distanceDone = Math.min(lapsTotal, 0.5 + Math.max(0, lapCountForDistance - 1));
         } else {
-          distanceDone = Math.min(lapsTotal, maxLapNumber);
+          distanceDone = Math.min(lapsTotal, lapCountForDistance);
         }
       }
 
@@ -539,6 +541,8 @@ export default function LaneTimingPage() {
   async function addLap(a: any) {
     if (!run || run.status !== "RUNNING" || !run.start_at) return;
     if (a.is_abandoned) return;
+    const d = derived[a.id];
+    if (d?.finished) return;
 
     const elapsedMs = Date.now() - new Date(run.start_at).getTime();
 
@@ -839,7 +843,7 @@ export default function LaneTimingPage() {
             const bufSec = d?.bufferMs != null ? d.bufferMs / 1000 : 0;
             const bufNorm = clamp((bufSec + 20) / 40, 0, 1);
 
-            const disabled = (run?.status !== "RUNNING" && !isRaceDone) || a.is_abandoned;
+            const disabled = (run?.status !== "RUNNING" && !isRaceDone) || a.is_abandoned || d?.finished;
             const canEditName = settingsOpen && run?.status !== "RUNNING";
 
             const mainName = baseSecondName(a);
