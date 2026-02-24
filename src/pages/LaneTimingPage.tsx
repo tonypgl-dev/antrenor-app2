@@ -615,7 +615,6 @@ export default function LaneTimingPage() {
     if (!run?.id) return;
     const { data, error } = await (supabase as any).rpc("start_run_atomic", {
       p_run_id: run.id,
-      p_coach: coach ?? "COACH",
     });
     if (error) {
       console.error(error);
