@@ -298,6 +298,8 @@ export default function AttendancePage() {
       const athlete = athletes.find((a: any) => a.id === athleteId);
       const latest = athlete ? getLatestSub(athlete, kind) : null;
 
+      const wasPerSession = athlete?.payment_mode === 'PER_SESSION';
+
       let start = t;
       if (latest?.expires_at) {
         const expires = parseISO(String(latest.expires_at));
@@ -319,9 +321,13 @@ export default function AttendancePage() {
         .insert(
           {
             athlete_id: athleteId,
+            type: kind,
             kind,
             starts_at,
+            start_date: starts_at,
             expires_at,
+            ends_at: expires_at,
+            amount: priceLei,
             price_lei: priceLei,
             created_by_coach: coach!,
           } as any,
@@ -330,6 +336,12 @@ export default function AttendancePage() {
         .single();
 
       if (subErr) throw subErr;
+
+      // If athlete is PER_SESSION, do not auto-switch payment mode when adding subscriptions
+      if (wasPerSession) {
+        const { error: pmErr } = await supabase.from('athletes').update({ payment_mode: 'PER_SESSION' } as any).eq('id', athleteId);
+        if (pmErr) console.warn('payment_mode restore failed:', pmErr.message);
+      }
 
       if (insertedSub) {
         const todayISO = new Date().toISOString().slice(0, 10);
@@ -498,41 +510,6 @@ export default function AttendancePage() {
                   <div className={statusTextClass(gStatus)}>F: {gText}</div>
                 </div>
 
-                {!isPerSession && cStatus === 'EXPIRED' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2 text-xs font-bold"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
-                      // trigger directly
-                      renewSub.mutate({ athleteId: athlete.id, kind: 'COACHING', priceLei: 800, athleteName: athlete.full_name });
-                    }}
-                    disabled={renewSub.isPending}
-                    title="Reînnoire Coaching 800"
-                  >
-                    800
-                  </Button>
-                )}
-                {gStatus === 'EXPIRED' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2 text-xs font-bold"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
-                      renewSub.mutate({ athleteId: athlete.id, kind: 'GYM', priceLei: 120, athleteName: athlete.full_name });
-                    }}
-                    disabled={renewSub.isPending}
-                    title="Reînnoire Gym 120"
-                  >
-                    120
-                  </Button>
-                )}
-
-
                 {isPerSession && isPresent && !isPaidSession && (
                   <Button
                     size="sm"
@@ -547,8 +524,8 @@ export default function AttendancePage() {
                   </Button>
                 )}
 
-                {/* Renewal buttons only for subscription athletes */}
-                {!isPerSession && isPresent && (
+                {/* Renewal buttons (show when expired) */}
+                {isPresent && (
                   <>
                     {gStatus === 'expired' && (
                       <Button
