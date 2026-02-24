@@ -319,13 +319,9 @@ export default function AttendancePage() {
         .insert(
           {
             athlete_id: athleteId,
-            type: kind,
             kind,
             starts_at,
-            start_date: starts_at,
             expires_at,
-            ends_at: expires_at,
-            amount: priceLei,
             price_lei: priceLei,
             created_by_coach: coach!,
           } as any,
