@@ -87,7 +87,9 @@ type SubStatus = 'none' | 'valid' | 'expiring' | 'expired';
 
 function getSubStatus(expiresISO?: string | null): SubStatus {
   if (!expiresISO) return 'none';
-  const expires = new Date(`${expiresISO}T00:00:00`).getTime();
+  const expires = String(expiresISO).includes('T')
+    ? new Date(String(expiresISO)).getTime()
+    : new Date(`${expiresISO}T00:00:00`).getTime();
   if (!Number.isFinite(expires)) return 'none';
   const now = new Date();
   const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -289,16 +291,8 @@ export default function AttendancePage() {
   });
 
   const renewSub = useMutation({
-    mutationFn: async ({ athleteId, kind, priceLei, athleteName, paymentMode }: { athleteId: string; kind: 'COACHING' | 'GYM'; priceLei: number; athleteName: string; paymentMode: string }) => {
-            const wasPerSession = paymentMode === "PER_SESSION";
-      if (wasPerSession && kind === "COACHING") {
-        const ok = window.confirm(
-          `${athleteName} va fi trecut(ă) pe tip de plată ABONAMENT.\n\nPentru a reveni la "la ședință", intră în pagina Sportivi.\n\nContinui?`
-        );
-        if (!ok) return;
-      }
-
-// Monthly rule (calendar month - 1 day):
+    mutationFn: async ({ athleteId, kind, priceLei, athleteName }: { athleteId: string; kind: 'COACHING' | 'GYM'; priceLei: number; athleteName: string }) => {
+      // Monthly rule (calendar month - 1 day):
       // start = today OR (latest expires + 1 day if still valid)
       // end = addMonths(start, 1) - 1 day
       const t = parseISO(today());
@@ -322,6 +316,13 @@ export default function AttendancePage() {
 
       if (!coach) throw new Error('Selectează coach-ul înainte de a reînnoi.');
 
+      const wasPerSession = athlete?.payment_mode === 'PER_SESSION';
+      if (wasPerSession && kind === 'COACHING') {
+        const ok = window.confirm(`${athleteName} este setat(ă) "la ședință". Dacă adaugi abonament COACHING, îl(o) vom trece pe tip de plată "Abonament". Continui?`);
+        if (!ok) throw new Error('__CANCELLED_RENEW__');
+      }
+
+
       const { data: insertedSub, error: subErr } = await supabase
         .from('subscriptions')
         .insert(
@@ -338,19 +339,6 @@ export default function AttendancePage() {
         .single();
 
       if (subErr) throw subErr;
-
-      // If athlete was PER_SESSION and we just created a COACHING subscription, auto-switch payment mode
-      if (paymentMode === "PER_SESSION" && kind === "COACHING") {
-        const { error: pmErr } = await supabase
-          .from("athletes")
-          .update({ payment_mode: "SUBSCRIPTION" } as any)
-          .eq("id", athleteId);
-        if (pmErr) {
-          console.warn("Failed to update payment_mode", pmErr);
-        } else {
-          toast.success(`${athleteName} a fost trecut(ă) pe tip de plată Abonament. Pentru a reveni la "la ședință", intră în pagina Sportivi.`);
-        }
-      }
 
       if (insertedSub) {
         const todayISO = new Date().toISOString().slice(0, 10);
@@ -379,6 +367,19 @@ export default function AttendancePage() {
           console.warn('cash_ledger upsert failed:', cashErr.message);
           toast.error('Cash insert: ' + (cashErr.message ?? 'eroare necunoscută'));
         }
+
+        // If athlete was PER_SESSION and we add COACHING subscription, switch to SUBSCRIPTION mode
+        if (wasPerSession && kind === 'COACHING') {
+          const { error: pmErr } = await supabase
+            .from('athletes')
+            .update({ payment_mode: 'SUBSCRIPTION' } as any)
+            .eq('id', athleteId);
+          if (pmErr) {
+            console.warn('payment_mode update failed:', pmErr.message);
+          } else {
+            toast.message(`${athleteName} a fost trecut(ă) pe tip de plată Abonament. Pentru a reveni la la ședință, intră în pagina Sportivi.`);
+          }
+        }
       }
     },
     onSuccess: (_, vars) => {
@@ -390,7 +391,10 @@ export default function AttendancePage() {
       setPaymentOverlay({ name: vars.athleteName || '', amount: vars.priceLei });
       setTimeout(() => setPaymentOverlay(null), 1200);
     },
-    onError: (e: any) => toast.error(e?.message ?? 'Eroare reînnoire'),
+    onError: (e: any) => {
+      if (e?.message === '__CANCELLED_RENEW__') return;
+      toast.error(e?.message ?? 'Eroare reînnoire');
+    },
   });
 
   const presentCount = filteredAthletes.filter((a: any) => a.entry?.present).length;
@@ -511,11 +515,11 @@ export default function AttendancePage() {
                   className="text-right text-[11px] leading-tight tabular-nums"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (!isPerSession) setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
+                    setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
                   }}
                   title={isPerSession ? 'Per ședință' : 'Tap pentru reînnoire'}
                 >
-                  <div className={statusTextClass(cStatus)}>C: {cText}</div>
+                  {!isPerSession && <div className={statusTextClass(cStatus)}>C: {cText}</div>}
                   <div className={statusTextClass(gStatus)}>F: {gText}</div>
                 </div>
 
@@ -533,10 +537,10 @@ export default function AttendancePage() {
                   </Button>
                 )}
 
-                {/* Renewal buttons only for subscription athletes */}
-                {!isPerSession && isPresent && (
+                {/* Quick renewal buttons (show when needs renewal) */}
+                {isPresent && (gStatus !== 'valid' || cStatus !== 'valid') && (
                   <>
-                    {gStatus === 'expired' && (
+                    {(gStatus === 'expired' || gStatus === 'none') && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -544,13 +548,13 @@ export default function AttendancePage() {
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
-                          renewSub.mutate({ athleteId: athlete.id, kind: 'GYM', priceLei: 120, athleteName: athlete.full_name, paymentMode: athlete.payment_mode });
+                          renewSub.mutate({ athleteId: athlete.id, kind: 'GYM', priceLei: 120, athleteName: athlete.full_name });
                         }}
                       >
                         120
                       </Button>
                     )}
-                    {cStatus === 'expired' && (
+                    {(cStatus === 'expired' || cStatus === 'none') && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -558,7 +562,7 @@ export default function AttendancePage() {
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
-                          renewSub.mutate({ athleteId: athlete.id, kind: 'COACHING', priceLei: 800, athleteName: athlete.full_name, paymentMode: athlete.payment_mode });
+                          renewSub.mutate({ athleteId: athlete.id, kind: 'COACHING', priceLei: 800, athleteName: athlete.full_name });
                         }}
                       >
                         800
@@ -706,7 +710,7 @@ return;
               variant="outline"
               disabled={renewSub.isPending}
               onClick={() =>
-                renewSub.mutate({ athleteId: renewSheet!.athleteId, kind: 'COACHING', priceLei: 800, athleteName: renewSheet!.athleteName , paymentMode: athlete.payment_mode })
+                renewSub.mutate({ athleteId: renewSheet!.athleteId, kind: 'COACHING', priceLei: 800, athleteName: renewSheet!.athleteName })
               }
             >
               <span>Coaching</span>
