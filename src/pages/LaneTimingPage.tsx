@@ -122,6 +122,7 @@ export default function LaneTimingPage() {
   const flashTick = useRef<number | null>(null);
 
   const [elapsed, setElapsed] = useState(0);
+  const [startPending, setStartPending] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [targetMin, setTargetMin] = useState("");
@@ -613,24 +614,33 @@ export default function LaneTimingPage() {
 
   async function startRun() {
     if (!run?.id) return;
-    const { data, error } = await (supabase as any).rpc("start_run_atomic", {
-      p_run_id: run.id,
-    });
-    if (error) {
-      console.error(error);
-      toast.error("Nu pot porni cursa");
-      return;
-    }
+    if (startPending) return;
+    setStartPending(true);
+    try {
+      const { data, error } = await supabase.rpc("start_run_atomic", {
+        p_run_id: run.id,
+      });
+      if (error) {
+        console.error(error);
+        toast.error("Nu pot porni cursa");
+        return;
+      }
 
-    if (!data) {
-      // run already started by another device; refresh local state silently
-      refetchRun();
-      return;
-    }
+      if (!data) {
+        // run already started by another device; refresh local state silently
+        await refetchRun();
+        return;
+      }
 
-    const startAt = (data as any)?.start_at;
-    // rely on DB-returned start_at as authoritative; refresh local state
-    if (startAt) refetchRun();
+      qc.setQueryData(["run-current", timingSession?.id, laneId], (prev: any) => {
+        if (!prev) return prev;
+        return { ...prev, status: "RUNNING", start_at: data };
+      });
+
+      await refetchRun();
+    } finally {
+      setStartPending(false);
+    }
   }
 
   async function stopRun() {
@@ -992,7 +1002,7 @@ export default function LaneTimingPage() {
       {/* Bottom controls */}
       <div className="fixed bottom-16 left-0 right-0 px-4">
         <div className="flex gap-3">
-          <Button className="flex-1 h-12" onClick={run?.status === "RUNNING" ? stopRun : startRun}>
+          <Button className="flex-1 h-12" disabled={startPending} onClick={run?.status === "RUNNING" ? stopRun : startRun}>
             {run?.status === "RUNNING" ? "Stop" : "Start"}
           </Button>
           <Button variant="outline" className="h-12" onClick={() => navigate("/timing")}>
