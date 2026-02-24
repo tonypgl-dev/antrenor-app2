@@ -623,12 +623,15 @@ export default function LaneTimingPage() {
       return;
     }
 
-    const startAt = (data as any)?.start_at;
-    if (startAt) {
-      // rely on DB-returned start_at as authoritative
-      // trigger refetch so run.start_at syncs with server
+    if (!data) {
+      // run already started by another device; refresh local state silently
       refetchRun();
+      return;
     }
+
+    const startAt = (data as any)?.start_at;
+    // rely on DB-returned start_at as authoritative; refresh local state
+    if (startAt) refetchRun();
   }
 
   async function stopRun() {
