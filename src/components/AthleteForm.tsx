@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Trash2, Pencil } from "lucide-react";
+import { ArrowLeft, Trash2, Pencil, Settings } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import {
@@ -67,6 +67,7 @@ type SubRow = {
   expires_at: string;
   price_lei: number;
   created_at?: string;
+   hidden_from_history?: boolean;
 };
 
 function kindLabel(kind: string) {
@@ -104,17 +105,27 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
 
   const update = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
+  const [historyAdminMode, setHistoryAdminMode] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+
   // ------------------ subscriptions history ------------------
 
+  // TODO: SQL:
+  // alter table public.subscriptions add column if not exists hidden_from_history boolean not null default false;
   const { data: subs = [], isLoading: subsLoading } = useQuery<SubRow[]>({
-    queryKey: ["subs-history", athlete?.id],
+    queryKey: ["subs-history", athlete?.id, showAllHistory ? "all" : "visible"],
     enabled: !!athlete?.id,
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("subscriptions")
-        .select("id, athlete_id, kind, start_date, expires_at, price_lei, created_at")
-        .eq("athlete_id", athlete.id)
-        .order("start_date", { ascending: false });
+        .select("id, athlete_id, kind, start_date, expires_at, price_lei, created_at, hidden_from_history")
+        .eq("athlete_id", athlete.id);
+
+      if (!showAllHistory) {
+        query = query.eq("hidden_from_history", false);
+      }
+
+      const { data, error } = await query.order("start_date", { ascending: false });
 
       if (error) throw error;
       return (data as any) ?? [];
@@ -177,37 +188,74 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
       const k = kindSafe(editSub.kind);
       if (k === "UNKNOWN") return;
 
-      const { data: cashRow, error: cashSelErr } = await supabase
-        .from("cash_ledger")
-        .select("id, amount, date")
-        .eq("athlete_id", editSub.athlete_id)
-        .eq("type", k)
-        .order("date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const shouldUpdateCash = window.confirm("Vrei să edităm suma în baza de date (cash)?");
 
-      if (cashSelErr) {
-        // don't fail the whole mutation
-        console.warn("cash_ledger select failed:", cashSelErr.message);
-        return;
-      }
+      if (shouldUpdateCash) {
+        const { data: cashRow, error: cashSelErr } = await supabase
+          .from("cash_ledger")
+          .select("id, amount, date")
+          .eq("athlete_id", editSub.athlete_id)
+          .eq("type", k)
+          .order("date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (!cashRow?.id) return;
-
-      const { error: cashUpdErr } = await supabase.from("cash_ledger").update({ amount: price }).eq("id", cashRow.id);
-      if (cashUpdErr) {
-        console.warn("cash_ledger update failed:", cashUpdErr.message);
+        if (cashSelErr) {
+          // don't fail the whole mutation
+          console.warn("cash_ledger select failed:", cashSelErr.message);
+        } else if (cashRow?.id) {
+          const { error: cashUpdErr } = await supabase.from("cash_ledger").update({ amount: price }).eq("id", cashRow.id);
+          if (cashUpdErr) {
+            console.warn("cash_ledger update failed:", cashUpdErr.message);
+          }
+        }
       }
     },
     onSuccess: () => {
       toast.success("Abonament actualizat");
       setEditSubOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["subs-history", athlete?.id] });
+      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
       queryClient.invalidateQueries({ queryKey: ["athletes"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
       queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Eroare editare"),
+  });
+
+  const hideSubMutation = useMutation({
+    mutationFn: async (row: SubRow) => {
+      const { error } = await supabase
+        .from("subscriptions")
+        .update({ hidden_from_history: true })
+        .eq("id", row.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Abonament ascuns din istoric");
+      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
+      queryClient.invalidateQueries({ queryKey: ["athletes"] });
+      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Eroare la ascundere abonament"),
+  });
+
+  const unhideSubMutation = useMutation({
+    mutationFn: async (row: SubRow) => {
+      const { error } = await supabase
+        .from("subscriptions")
+        .update({ hidden_from_history: false })
+        .eq("id", row.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Abonament reafișat în istoric");
+      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
+      queryClient.invalidateQueries({ queryKey: ["athletes"] });
+      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
+      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Eroare la reafișare abonament"),
   });
 
   // ------------------ one click extend (atomic, multi-device safe) ------------------
@@ -243,7 +291,7 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
     if (cashErr) console.warn("cash_ledger insert failed:", cashErr.message);
 
     toast.success("Abonament prelungit");
-    queryClient.invalidateQueries({ queryKey: ["subs-history", athlete?.id] });
+    queryClient.invalidateQueries({ queryKey: ["subs-history"] });
     queryClient.invalidateQueries({ queryKey: ["athletes"] });
     queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
     queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
@@ -314,7 +362,13 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Telefon</Label>
-            <Input value={form.phone} onChange={(e) => update("phone", e.target.value)} type="tel" />
+            <Input
+              value={form.phone}
+              onChange={(e) => update("phone", e.target.value.replace(/[^\d]/g, ""))}
+              type="tel"
+              inputMode="numeric"
+              pattern="[0-9]*"
+            />
           </div>
           <div>
             <Label>Data nașterii</Label>
@@ -369,7 +423,28 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
         {/* Subscriptions */}
         {isEdit && (
           <div className="rounded-xl border bg-card p-3 space-y-4">
-            <div className="font-semibold text-sm">Abonamente</div>
+            <div className="flex items-center justify-between">
+              <div className="font-semibold text-sm">Abonamente</div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={historyAdminMode ? "outline" : "ghost"}
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setHistoryAdminMode((v) => !v)}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setShowAllHistory((v) => !v)}
+                  disabled={!historyAdminMode}
+                >
+                  Arată toate
+                </Button>
+              </div>
+            </div>
 
             {/* Current status */}
             <div className="text-[12px] leading-relaxed">
@@ -422,8 +497,12 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
                     .reverse()
                     .map((s, idx, arr) => {
                       const isLast = idx === arr.length - 1;
+                      const isHidden = !!s.hidden_from_history;
+                      const rowClasses =
+                        "flex items-center justify-between rounded-lg border px-2 py-2 text-[12px]" +
+                        (historyAdminMode && showAllHistory && isHidden ? " opacity-60" : "");
                       return (
-                        <div key={s.id} className="flex items-center justify-between rounded-lg border px-2 py-2 text-[12px]">
+                        <div key={s.id} className={rowClasses}>
                           <div className="min-w-0">
                             <div className="font-semibold">
                               {kindLabel(s.kind || "")}
@@ -434,11 +513,36 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
                             </div>
                           </div>
 
-                          {isLast && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditSub(s)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {historyAdminMode &&
+                              (isHidden && showAllHistory ? (
+                                <Button
+                                  variant="outline"
+                                  size="xs"
+                                  className="h-7 px-2 text-[11px]"
+                                  onClick={() => unhideSubMutation.mutate(s)}
+                                >
+                                  Reafișează
+                                </Button>
+                              ) : (
+                                !isHidden && (
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    className="h-7 px-2 text-[11px] text-red-600 border-red-200 hover:bg-red-50"
+                                    onClick={() => hideSubMutation.mutate(s)}
+                                  >
+                                    X
+                                  </Button>
+                                )
+                              ))}
+
+                            {(historyAdminMode || isLast) && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditSub(s)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
