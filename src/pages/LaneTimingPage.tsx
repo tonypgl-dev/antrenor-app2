@@ -343,11 +343,20 @@ export default function LaneTimingPage() {
       const lastEv = events[n - 1];
       const totalElapsedAtLast = n ? Number(lastEv.elapsed_ms) : 0;
 
+      // use highest recorded lap_number (not array position) for distance / finish
+      const maxLapNumber = events.reduce(
+        (max: number, ev: any) => Math.max(max, Number(ev.lap_number) || 0),
+        0,
+      );
+
       // distance units done (in laps, can be 0.5 steps)
       let distanceDone = 0;
-      if (n > 0) {
-        if (hasHalfFirstSplit) distanceDone = Math.min(lapsTotal, 0.5 + Math.max(0, n - 1));
-        else distanceDone = Math.min(lapsTotal, n);
+      if (maxLapNumber > 0) {
+        if (hasHalfFirstSplit) {
+          distanceDone = Math.min(lapsTotal, 0.5 + Math.max(0, maxLapNumber - 1));
+        } else {
+          distanceDone = Math.min(lapsTotal, maxLapNumber);
+        }
       }
 
       // splits (segment times)
@@ -530,18 +539,10 @@ export default function LaneTimingPage() {
     if (!run || run.status !== "RUNNING" || !run.start_at) return;
     if (a.is_abandoned) return;
 
-    // visual feedback
-    pushFlash(a.athletes?.full_name ?? "Sportiv");
-    setPulseId(a.id);
-    window.setTimeout(() => setPulseId(null), 500);
-
-    // Audio feedback for lap
-    playBeep(80, 880);
-
     const elapsedMs = Date.now() - new Date(run.start_at).getTime();
 
     // atomic insert via RPC
-    const { error } = await (supabase as any).rpc("add_lap_event_atomic", {
+    const { data, error } = await (supabase as any).rpc("add_lap_event_atomic", {
       p_run_id: run.id,
       p_lane_assignment_id: a.id,
       p_elapsed_ms: elapsedMs,
@@ -551,7 +552,22 @@ export default function LaneTimingPage() {
     if (error) {
       console.error(error);
       toast.error(`Lap nereușit: ${error.message ?? "Eroare"}`);
+      return;
     }
+
+    const inserted = (data as any)?.inserted;
+    if (!inserted) {
+      // duplicate or ignored event; no feedback
+      return;
+    }
+
+    // success feedback (only when inserted)
+    pushFlash(a.athletes?.full_name ?? "Sportiv");
+    setPulseId(a.id);
+    window.setTimeout(() => setPulseId(null), 500);
+
+    // Audio feedback for lap
+    playBeep(80, 880);
   }
 
   async function undoLastLap(a: any) {
@@ -597,16 +613,22 @@ export default function LaneTimingPage() {
 
   async function startRun() {
     if (!run?.id) return;
-    const { error } = await supabase
-      .from("runs")
-      .update({ status: "RUNNING", start_at: new Date().toISOString() })
-      .eq("id", run.id);
+    const { data, error } = await (supabase as any).rpc("start_run_atomic", {
+      p_run_id: run.id,
+      p_coach: coach ?? "COACH",
+    });
     if (error) {
       console.error(error);
       toast.error("Nu pot porni cursa");
       return;
     }
-    refetchRun();
+
+    const startAt = (data as any)?.start_at;
+    if (startAt) {
+      // rely on DB-returned start_at as authoritative
+      // trigger refetch so run.start_at syncs with server
+      refetchRun();
+    }
   }
 
   async function stopRun() {

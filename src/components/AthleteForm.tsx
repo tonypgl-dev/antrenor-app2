@@ -288,7 +288,10 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
       created_by_coach: coach,
     } as any);
 
-    if (cashErr) console.warn("cash_ledger insert failed:", cashErr.message);
+    if (cashErr) {
+      console.warn("cash_ledger insert failed:", cashErr.message);
+      toast.error("Cash insert: " + (cashErr.message ?? "eroare necunoscută"));
+    }
 
     toast.success("Abonament prelungit");
     queryClient.invalidateQueries({ queryKey: ["subs-history"] });

@@ -320,9 +320,13 @@ export default function AttendancePage() {
           {
             athlete_id: athleteId,
             type: kind,
+            kind,
             starts_at,
+            start_date: starts_at,
             expires_at,
+            ends_at: expires_at,
             amount: priceLei,
+            price_lei: priceLei,
             created_by_coach: coach!,
           } as any,
         )
@@ -363,6 +367,8 @@ export default function AttendancePage() {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['attendance-athletes'] });
       queryClient.invalidateQueries({ queryKey: ['athletes'] });
+      queryClient.invalidateQueries({ queryKey: ['subs-history'] });
+      queryClient.invalidateQueries({ queryKey: ['cash-ledger'] });
       setRenewSheet(null);
       setPaymentOverlay({ name: vars.athleteName || '', amount: vars.priceLei });
       setTimeout(() => setPaymentOverlay(null), 1200);
