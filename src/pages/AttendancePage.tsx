@@ -312,27 +312,53 @@ export default function AttendancePage() {
       const starts_at = format(start, 'yyyy-MM-dd');
       const expires_at = format(end, 'yyyy-MM-dd');
 
-            if (!coach) throw new Error('Selectează coach-ul înainte de a reînnoi.');
+      if (!coach) throw new Error('Selectează coach-ul înainte de a reînnoi.');
 
-      const { error: subErr } = await supabase.from('subscriptions').insert({
-        athlete_id: athleteId,
-        type: kind,
-        starts_at,
-        expires_at,
-        amount: priceLei,
-        created_by_coach: coach!,
-      } as any);
+      const { data: insertedSub, error: subErr } = await supabase
+        .from('subscriptions')
+        .insert(
+          {
+            athlete_id: athleteId,
+            type: kind,
+            starts_at,
+            expires_at,
+            amount: priceLei,
+            created_by_coach: coach!,
+          } as any,
+        )
+        .select()
+        .single();
+
       if (subErr) throw subErr;
 
-      const { error: cashErr } = await supabase.from('cash_ledger').insert({
-        athlete_id: athleteId,
-        athlete_name: athleteName,
-        type: kind,
-        amount: priceLei,
-        date: today(),
-        created_by_coach: coach!,
-      } as any);
-      if (cashErr) console.warn('cash_ledger insert failed:', cashErr.message);
+      if (insertedSub) {
+        const todayISO = new Date().toISOString().slice(0, 10);
+
+        const { error: cashErr } = await supabase
+          .from('cash_ledger')
+          .upsert(
+            {
+              athlete_id: insertedSub.athlete_id,
+              athlete_name: athleteName,
+              // relies on DB column + unique(subscription_id)
+              subscription_id: insertedSub.id,
+              type: (insertedSub as any).kind ?? insertedSub.type ?? 'SUBSCRIPTION',
+              amount:
+                (insertedSub as any).price_lei ??
+                (insertedSub as any).price ??
+                insertedSub.amount,
+              date: todayISO,
+              note: 'subscription',
+              created_by_coach: coach!,
+            } as any,
+            { onConflict: 'subscription_id' },
+          );
+
+        if (cashErr) {
+          console.warn('cash_ledger upsert failed:', cashErr.message);
+          toast.error('Cash insert: ' + (cashErr.message ?? 'eroare necunoscută'));
+        }
+      }
     },
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['attendance-athletes'] });
@@ -492,6 +518,7 @@ export default function AttendancePage() {
                         size="sm"
                         variant="outline"
                         className="h-7 px-3 text-xs font-bold"
+                        disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
                           renewSub.mutate({ athleteId: athlete.id, kind: 'GYM', priceLei: 120, athleteName: athlete.full_name });
@@ -505,6 +532,7 @@ export default function AttendancePage() {
                         size="sm"
                         variant="outline"
                         className="h-7 px-3 text-xs font-bold"
+                        disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
                           renewSub.mutate({ athleteId: athlete.id, kind: 'COACHING', priceLei: 800, athleteName: athlete.full_name });
@@ -653,6 +681,7 @@ return;
             <Button
               className="w-full justify-between"
               variant="outline"
+              disabled={renewSub.isPending}
               onClick={() =>
                 renewSub.mutate({ athleteId: renewSheet!.athleteId, kind: 'COACHING', priceLei: 800, athleteName: renewSheet!.athleteName })
               }
@@ -663,6 +692,7 @@ return;
             <Button
               className="w-full justify-between"
               variant="outline"
+              disabled={renewSub.isPending}
               onClick={() => renewSub.mutate({ athleteId: renewSheet!.athleteId, kind: 'GYM', priceLei: 120, athleteName: renewSheet!.athleteName })}
             >
               <span>Gym / Teren</span>
