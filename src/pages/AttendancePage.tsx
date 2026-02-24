@@ -87,7 +87,9 @@ type SubStatus = 'none' | 'valid' | 'expiring' | 'expired';
 
 function getSubStatus(expiresISO?: string | null): SubStatus {
   if (!expiresISO) return 'none';
-  const expires = new Date(`${expiresISO}T00:00:00`).getTime();
+  const expires = expiresISO.includes('T')
+    ? new Date(expiresISO).getTime()
+    : new Date(`${expiresISO}T00:00:00`).getTime();
   if (!Number.isFinite(expires)) return 'none';
   const now = new Date();
   const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -298,8 +300,6 @@ export default function AttendancePage() {
       const athlete = athletes.find((a: any) => a.id === athleteId);
       const latest = athlete ? getLatestSub(athlete, kind) : null;
 
-      const wasPerSession = athlete?.payment_mode === 'PER_SESSION';
-
       let start = t;
       if (latest?.expires_at) {
         const expires = parseISO(String(latest.expires_at));
@@ -336,12 +336,6 @@ export default function AttendancePage() {
         .single();
 
       if (subErr) throw subErr;
-
-      // If athlete is PER_SESSION, do not auto-switch payment mode when adding subscriptions
-      if (wasPerSession) {
-        const { error: pmErr } = await supabase.from('athletes').update({ payment_mode: 'PER_SESSION' } as any).eq('id', athleteId);
-        if (pmErr) console.warn('payment_mode restore failed:', pmErr.message);
-      }
 
       if (insertedSub) {
         const todayISO = new Date().toISOString().slice(0, 10);
@@ -502,11 +496,11 @@ export default function AttendancePage() {
                   className="text-right text-[11px] leading-tight tabular-nums"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
+                    if (!isPerSession) setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
                   }}
                   title={isPerSession ? 'Per ședință' : 'Tap pentru reînnoire'}
                 >
-                  {!isPerSession && <div className={statusTextClass(cStatus)}>C: {cText}</div>}
+                  <div className={statusTextClass(cStatus)}>C: {cText}</div>
                   <div className={statusTextClass(gStatus)}>F: {gText}</div>
                 </div>
 
@@ -524,8 +518,8 @@ export default function AttendancePage() {
                   </Button>
                 )}
 
-                {/* Renewal buttons (show when expired) */}
-                {isPresent && (
+                {/* Renewal buttons only for subscription athletes */}
+                {!isPerSession && isPresent && (
                   <>
                     {gStatus === 'expired' && (
                       <Button
