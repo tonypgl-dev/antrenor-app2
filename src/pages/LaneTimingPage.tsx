@@ -12,6 +12,14 @@ const today = () => new Date().toISOString().split("T")[0];
 
 type FlashItem = { id: string; name: string; expiresAt: number };
 
+type FinishUiState = {
+  finishedAt: number;   // first time we detected FINISH on this device
+  collapsed: boolean;   // after 3s -> true (moves to bottom group)
+  movedKey: number;     // increments to trigger a light "fly" animation on mount
+};
+
+type FinishUiMap = Record<string, FinishUiState>;
+
 function formatMs(ms: number) {
   const m = Math.floor(ms / 60000);
   const s = Math.floor((ms % 60000) / 1000);
@@ -95,6 +103,7 @@ function playBeep(durationMs: number, frequency = 520) {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
+    try { (ctx as any).resume?.(); } catch {}
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.connect(g);
@@ -117,6 +126,12 @@ export default function LaneTimingPage() {
   const navigate = useNavigate();
   const { coach } = useCoach();
   const qc = useQueryClient();
+
+
+  const [finishUi, setFinishUi] = useState<FinishUiMap>({});
+  const [expandedFinished, setExpandedFinished] = useState<Record<string, boolean>>({});
+  const finishTimersRef = useRef<Record<string, number>>({});
+  const prevFinishedRef = useRef<Record<string, boolean>>({});
 
     const pendingLapRef = useRef<Record<string, boolean>>({});
   const retryLapEventIdRef = useRef<Record<string, { id: string; ts: number }>>({});
@@ -471,6 +486,99 @@ const pressTimer = useRef<number | null>(null);
     return active.every((a: any) => derived[a.id]?.finished);
   }, [assignments, derived]);
 
+  // Detect FINISH transitions locally (UI-only): keep full card for 3s, then collapse + move to bottom
+  useEffect(() => {
+    // reset UI state when we switch runs / lanes
+    const activeIds = new Set((assignments as any[]).map((a: any) => a.id));
+    setFinishUi((prev) => {
+      const next: FinishUiMap = {};
+      for (const [id, st] of Object.entries(prev)) {
+        if (activeIds.has(id)) next[id] = st;
+      }
+      return next;
+    });
+    setExpandedFinished((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const [id, v] of Object.entries(prev)) {
+        if (activeIds.has(id)) next[id] = v;
+      }
+      return next;
+    });
+
+    for (const a of assignments as any[]) {
+      const id = a.id as string;
+      const isFin = !!derived[id]?.finished;
+      const wasFin = !!prevFinishedRef.current[id];
+
+      if (isFin && !wasFin) {
+        prevFinishedRef.current[id] = true;
+
+        // initialize UI state for this finish
+        setFinishUi((prev) => ({
+          ...prev,
+          [id]: {
+            finishedAt: Date.now(),
+            collapsed: false,
+            movedKey: prev[id]?.movedKey ?? 0,
+          },
+        }));
+
+        // clear any previous timer (defensive)
+        const oldT = finishTimersRef.current[id];
+        if (oldT) window.clearTimeout(oldT);
+
+        // after 3s -> collapse + move to bottom
+        finishTimersRef.current[id] = window.setTimeout(() => {
+          setFinishUi((prev) => {
+            const curr = prev[id];
+            if (!curr) return prev;
+            return {
+              ...prev,
+              [id]: {
+                ...curr,
+                collapsed: true,
+                movedKey: (curr.movedKey ?? 0) + 1,
+              },
+            };
+          });
+        }, 3000);
+      }
+
+      if (!isFin && wasFin) {
+        // if finish was undone (UNDO lap etc.), revert UI state
+        prevFinishedRef.current[id] = false;
+        const oldT = finishTimersRef.current[id];
+        if (oldT) window.clearTimeout(oldT);
+        delete finishTimersRef.current[id];
+        setFinishUi((prev) => {
+          if (!prev[id]) return prev;
+          const { [id]: _, ...rest } = prev;
+          return rest;
+        });
+        setExpandedFinished((prev) => {
+          if (!prev[id]) return prev;
+          const { [id]: _, ...rest } = prev;
+          return rest;
+        });
+      }
+    }
+
+    return () => {
+      // no-op: timers are cleared on unmount below
+    };
+  }, [assignments, derived]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      for (const t of Object.values(finishTimersRef.current)) {
+        window.clearTimeout(t);
+      }
+      finishTimersRef.current = {};
+    };
+  }, []);
+
+
   async function completeRun() {
     if (!run?.id) return;
     const { error } = await supabase.from("runs").update({ status: "COMPLETED" }).eq("id", run.id);
@@ -496,18 +604,48 @@ const pressTimer = useRef<number | null>(null);
     }
   }, [allFinished, run?.status]);
 
-  const sortedAssignments = useMemo(() => {
+    const sortedAssignments = useMemo(() => {
     const list = [...(assignments as any[])];
-    list.sort((a, b) => {
-      const aa = a.is_abandoned ? 1 : 0;
-      const bb = b.is_abandoned ? 1 : 0;
-      if (aa !== bb) return aa - bb;
-      return (a.sort_order ?? 0) - (b.sort_order ?? 0);
-    });
-    return list;
-  }, [assignments]);
 
-  function baseSecondName(a: any) {
+    const isCollapsedFinished = (a: any) => {
+      const id = a.id as string;
+      const isFin = !!derived[id]?.finished;
+      return isFin && !!finishUi[id]?.collapsed;
+    };
+
+    const finalMs = (a: any) => {
+      const id = a.id as string;
+      const v = derived[id]?.totalElapsedAtLast;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    };
+
+    // Groups:
+    // 0) active + finished-but-still-showing-full-card (first 3s)
+    // 1) finished-collapsed (move to bottom, best final time first)
+    // 2) abandoned (always last)
+    const g0: any[] = [];
+    const g1: any[] = [];
+    const g2: any[] = [];
+
+    for (const a of list) {
+      if (a.is_abandoned) {
+        g2.push(a);
+      } else if (isCollapsedFinished(a)) {
+        g1.push(a);
+      } else {
+        g0.push(a);
+      }
+    }
+
+    g0.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    g1.sort((a, b) => finalMs(a) - finalMs(b));
+    g2.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+    return [...g0, ...g1, ...g2];
+  }, [assignments, derived, finishUi]);
+
+function baseSecondName(a: any) {
     return lastWordUpper(a.athletes?.full_name ?? "Sportiv");
   }
   function suffixLabel(a: any) {
@@ -551,13 +689,16 @@ const pressTimer = useRef<number | null>(null);
     if (pendingLapRef.current[pendingKey]) return;
     pendingLapRef.current[pendingKey] = true;
 
-    // Reconnect edge-case:
-    // If the previous tap failed due to network, reuse the same client_event_id for retry,
-    // so we don't create duplicates when the connection comes back.
-    const nowTs = Date.now();
-    const existing = retryLapEventIdRef.current[pendingKey];
-    const clientEventId =
-      existing && nowTs - existing.ts < 30_000 ? existing.id : crypto.randomUUID();
+    // Anti double-tap + reconnect edge-case:
+// Reuse the same client_event_id for a short window so the DB idempotency can dedupe.
+// 3s is safe: a real lap can't happen that fast.
+const nowTs = Date.now();
+const existing = retryLapEventIdRef.current[pendingKey];
+const clientEventId =
+  existing && nowTs - existing.ts < 3_000 ? existing.id : crypto.randomUUID();
+
+// store immediately so rapid double taps reuse the same id
+retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
 
     try {
       const elapsedMs = Date.now() - new Date(run.start_at).getTime();
@@ -580,20 +721,35 @@ const pressTimer = useRef<number | null>(null);
         return;
       }
 
-      // success: clear retry id
-      delete retryLapEventIdRef.current[pendingKey];
-
-      const inserted = (data as any)?.inserted;
+      const row = Array.isArray(data) ? (data as any)[0] : (data as any);
+      const inserted = row?.inserted === true;
       if (!inserted) {
-        // duplicate or ignored event; no feedback
+        // duplicate or ignored event; keep silent
+        window.setTimeout(() => {
+          const cur = retryLapEventIdRef.current[pendingKey];
+          if (cur?.id === clientEventId) delete retryLapEventIdRef.current[pendingKey];
+        }, 3_000);
         return;
       }
+
+      // cleanup debounce id after 3s (only if still the same id)
+      window.setTimeout(() => {
+        const cur = retryLapEventIdRef.current[pendingKey];
+        if (cur?.id === clientEventId) delete retryLapEventIdRef.current[pendingKey];
+      }, 3_000);
 
       // success feedback (only when inserted)
       pushFlash(a.athletes?.full_name ?? "Sportiv");
       setPulseId(a.id);
       window.setTimeout(() => setPulseId(null), 500);
       playBeep(80, 880);
+      try {
+        if (typeof navigator !== "undefined" && (navigator as any).vibrate) {
+          (navigator as any).vibrate(30);
+        }
+      } catch {
+        // ignore
+      }
     } finally {
       pendingLapRef.current[pendingKey] = false;
     }
@@ -844,6 +1000,11 @@ const pressTimer = useRef<number | null>(null);
             const d = derived[a.id];
             const pressed = pulseId === a.id;
 
+            // Finished UI state
+            const isCollapsed = !!d?.finished && !!finishUi[a.id]?.collapsed;
+            const isExpanded = !!expandedFinished[a.id];
+            const showCompact = isCollapsed && !isExpanded;
+
             const { className, style } = paceVisual(a, d);
 
             const lastSplit = d?.lastSplit != null ? formatMs(d.lastSplit) : "—";
@@ -867,7 +1028,11 @@ const pressTimer = useRef<number | null>(null);
             const bufSec = d?.bufferMs != null ? d.bufferMs / 1000 : 0;
             const bufNorm = clamp((bufSec + 20) / 40, 0, 1);
 
-            const disabled = (run?.status !== "RUNNING" && !isRaceDone) || a.is_abandoned || d?.finished || pendingLapRef.current[a.id] === true;
+            const disabled =
+              (run?.status !== "RUNNING" && !isRaceDone) ||
+              a.is_abandoned ||
+              (!showCompact && d?.finished) ||
+              pendingLapRef.current[a.id] === true;
             const canEditName = settingsOpen && run?.status !== "RUNNING";
 
             const mainName = baseSecondName(a);
@@ -887,15 +1052,27 @@ const pressTimer = useRef<number | null>(null);
 
             return (
               <button
-                key={a.id}
+                key={isCollapsed ? `${a.id}-done-${finishUi[a.id]?.movedKey ?? 0}-${isExpanded ? 1 : 0}` : a.id}
                 className={[
                   "relative w-full rounded-xl p-3 text-left shadow-sm",
+                  isCollapsed ? "animate-in slide-in-from-top-2 duration-200" : "",
                   className,
                   disabled ? "opacity-80" : "active:scale-[0.99]",
                   pressed ? "ring-2 ring-offset-1 ring-primary" : "",
                 ].join(" ")}
                 style={style}
-                onClick={() => addLap(a)}
+                onClick={() => {
+                  if (showCompact) {
+                    setExpandedFinished((prev) => ({ ...prev, [a.id]: true }));
+                    return;
+                  }
+                  if (isCollapsed && isExpanded) {
+                    // toggle collapse/expand for finished athletes
+                    setExpandedFinished((prev) => ({ ...prev, [a.id]: !prev[a.id] }));
+                    return;
+                  }
+                  addLap(a);
+                }}
                 onPointerDown={() => {
                   if (run?.status !== "RUNNING") return;
                   pressTimer.current = window.setTimeout(() => {
@@ -936,6 +1113,7 @@ const pressTimer = useRef<number | null>(null);
                 </div>
 
                 {/* KPI row: big GAP + big laps */}
+                {!showCompact && (
                 <div className="flex items-end justify-between gap-2">
                   <div className="min-w-0">
                     <div className={["text-2xl font-extrabold tabular-nums leading-none", gapColor].join(" ")}>{gapTxt}</div>
@@ -966,27 +1144,53 @@ const pressTimer = useRef<number | null>(null);
                       <div className="mt-1 text-[11px] text-muted-foreground">{avgLap !== "—" ? `AVG ${avgLap}` : ""}</div>
                     )}
                   </div>
-                </div>
+                </div>                )}
 
                 {/* ✅ NEW: Final time + per-lap splits when finished */}
-                {d?.finished && (
-                  <div className="mt-3 rounded-lg border bg-background/60 p-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-[11px] font-semibold text-muted-foreground">FINAL</div>
-                      <div className="text-lg font-extrabold tabular-nums">{finalTxt}</div>
-                    </div>
+                                {d?.finished && (
+                  <>
+                    {showCompact ? (
+                      <div className="mt-2 flex items-center justify-between rounded-lg border bg-background/60 px-3 py-2">
+                        <div className="text-[11px] font-semibold text-muted-foreground">FINAL</div>
+                        <div className="text-lg font-extrabold tabular-nums">{finalTxt}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-lg border bg-background/60 p-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[11px] font-semibold text-muted-foreground">FINAL</div>
+                          <div className="text-lg font-extrabold tabular-nums">{finalTxt}</div>
+                        </div>
 
-                    {splitList.length > 0 && (
-                      <div className="mt-2 grid grid-cols-3 gap-1">
-                        {splitList.map((ms: number, i: number) => (
-                          <div key={i} className="rounded-md border bg-card px-2 py-1">
-                            <div className="text-[10px] font-semibold text-muted-foreground">{splitLabel(i)}</div>
-                            <div className="text-sm font-bold tabular-nums">{formatMs(ms)}</div>
+                        {splitList.length > 0 && (
+                          <div className="mt-2 grid grid-cols-3 gap-1">
+                            {splitList.map((ms: number, i: number) => (
+                              <div key={i} className="rounded-md border bg-card px-2 py-1">
+                                <div className="text-[10px] font-semibold text-muted-foreground">{splitLabel(i)}</div>
+                                <div className="text-sm font-bold tabular-nums">{formatMs(ms)}</div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
-                  </div>
+
+                    {isCollapsed && isExpanded && (
+                      <div className="mt-2 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setExpandedFinished((prev) => ({ ...prev, [a.id]: false }));
+                          }}
+                        >
+                          Collapse
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </button>
             );
