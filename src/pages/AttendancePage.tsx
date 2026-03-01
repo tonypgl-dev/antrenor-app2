@@ -127,22 +127,35 @@ export default function AttendancePage() {
   type StructureFilter = 'ALL' | 'MAI' | 'MAPN';
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>(() => {
-    const v = localStorage.getItem('attendance_sort_mode');
-    return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'FIRST';
-  });
-  const [structureFilter, setStructureFilter] = useState<StructureFilter>(() => {
-    const v = localStorage.getItem('attendance_structure_filter');
-    return (v === 'ALL' || v === 'MAI' || v === 'MAPN') ? (v as StructureFilter) : 'ALL';
-  });
+  const [sortMode, setSortMode] = useState<SortMode>('FIRST');
+  const [structureFilter, setStructureFilter] = useState<StructureFilter>('ALL');
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
+  // Load preferences from Supabase when coach is known
   useEffect(() => {
-    localStorage.setItem('attendance_sort_mode', sortMode);
-  }, [sortMode]);
+    if (!coach) return;
+    supabase
+      .from('coach_preferences' as any)
+      .select('sort_mode, structure_filter')
+      .eq('coach_id', coach)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          if (data.sort_mode === 'FIRST' || data.sort_mode === 'SECOND') setSortMode(data.sort_mode);
+          if (data.structure_filter === 'ALL' || data.structure_filter === 'MAI' || data.structure_filter === 'MAPN') setStructureFilter(data.structure_filter);
+        }
+        setPrefsLoaded(true);
+      });
+  }, [coach]);
 
+  // Save preferences to Supabase whenever they change (after initial load)
   useEffect(() => {
-    localStorage.setItem('attendance_structure_filter', structureFilter);
-  }, [structureFilter]);
+    if (!coach || !prefsLoaded) return;
+    supabase
+      .from('coach_preferences' as any)
+      .upsert({ coach_id: coach, sort_mode: sortMode, structure_filter: structureFilter }, { onConflict: 'coach_id' })
+      .then(({ error }) => { if (error) console.warn('prefs save failed:', error.message); });
+  }, [sortMode, structureFilter, coach, prefsLoaded]);
 
   const getSortKey = (athlete: any) => {
     const name = String(athlete?.full_name ?? '').trim();
