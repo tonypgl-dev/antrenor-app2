@@ -611,7 +611,7 @@ export default function AttendancePage() {
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0">!</span>
                     )}
-                    {!isPerSession && cStatus !== 'expired' && gStatus === 'expired' && (
+                    {!isPerSession && gStatus === 'expired' && (
                       <span className="text-orange-400 text-2xl font-black flex-shrink-0">!</span>
                     )}
                   </span>
