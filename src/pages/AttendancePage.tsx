@@ -127,6 +127,13 @@ export default function AttendancePage() {
   type StructureFilter = 'ALL' | 'MAI' | 'MAPN';
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('attendance_dark_mode') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('attendance_dark_mode', String(darkMode));
+  }, [darkMode]);
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const v = localStorage.getItem('attendance_sort_mode');
     return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'FIRST';
@@ -158,15 +165,6 @@ export default function AttendancePage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [paymentOverlay, setPaymentOverlay] = useState<{ name: string; amount: number } | null>(null);
-  type LastPayment = {
-    label: string;          // "Popescu Ion · 80 RON"
-    cashLedgerId?: string;  // id row from cash_ledger (for 80/PER_SESSION)
-    subscriptionId?: string; // id row from subscriptions (for 120/800)
-    athleteId?: string;     // for reverting session_paid flag
-    attendanceDayId?: string;
-  };
-  const [lastPayment, setLastPayment] = useState<LastPayment | null>(null);
-  const undoTimerRef = useRef<number | null>(null);
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [renewSheet, setRenewSheet] = useState<{ athleteId: string; athleteName: string } | null>(null);
   const [showNeedsAttention, setShowNeedsAttention] = useState(true);
@@ -308,14 +306,14 @@ export default function AttendancePage() {
 
   const paySession = useMutation({
     mutationFn: async (athlete: any) => {
-      const { data: cashRow, error: cErr } = await supabase.from('cash_ledger').insert({
+      const { error: cErr } = await supabase.from('cash_ledger').insert({
         athlete_id: athlete.id,
         athlete_name: athlete.full_name,
         type: 'PER_SESSION',
         amount: 80,
         date: today(),
         created_by_coach: coach!,
-      } as any).select('id').single();
+      } as any);
       if (cErr) throw cErr;
 
       const { error: eErr } = await supabase
@@ -324,20 +322,11 @@ export default function AttendancePage() {
         .eq('attendance_day_id', attendanceDay!.id)
         .eq('athlete_id', athlete.id);
       if (eErr) throw eErr;
-
-      return { cashLedgerId: (cashRow as any)?.id };
     },
-    onSuccess: (result, athlete) => {
+    onSuccess: (_, athlete) => {
       queryClient.invalidateQueries({ queryKey: ['attendance-athletes'] });
       setPaymentOverlay({ name: athlete.full_name, amount: 80 });
       setTimeout(() => setPaymentOverlay(null), 1200);
-      const name = String(athlete.full_name ?? '').trim().split(/\s+/).reverse().slice(0, 2).reverse().join(' ');
-      showUndo({
-        label: `${name} · 80 RON`,
-        cashLedgerId: result?.cashLedgerId,
-        athleteId: athlete.id,
-        attendanceDayId: attendanceDay?.id,
-      });
     },
     onError: (e: any) => toast.error(e?.message ?? 'Eroare plată'),
   });
@@ -433,9 +422,8 @@ export default function AttendancePage() {
           }
         }
       }
-      return { subscriptionId: insertedSub?.id };
     },
-    onSuccess: (result: any, vars) => {
+    onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['attendance-athletes'] });
       queryClient.invalidateQueries({ queryKey: ['athletes'] });
       queryClient.invalidateQueries({ queryKey: ['subs-history'] });
@@ -443,49 +431,12 @@ export default function AttendancePage() {
       setRenewSheet(null);
       setPaymentOverlay({ name: vars.athleteName || '', amount: vars.priceLei });
       setTimeout(() => setPaymentOverlay(null), 1200);
-      const name = String(vars.athleteName ?? '').trim().split(/\s+/).reverse().slice(0, 2).reverse().join(' ');
-      showUndo({
-        label: `${name} · ${vars.priceLei} RON`,
-        subscriptionId: result?.subscriptionId,
-      });
     },
     onError: (e: any) => {
       if (e?.message === '__CANCELLED_RENEW__') return;
       toast.error(e?.message ?? 'Eroare reînnoire');
     },
   });
-
-  function showUndo(payment: LastPayment) {
-    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    setLastPayment(payment);
-    undoTimerRef.current = window.setTimeout(() => setLastPayment(null), 8000);
-  }
-
-  async function handleUndo() {
-    if (!lastPayment) return;
-    try {
-      if (lastPayment.cashLedgerId) {
-        await supabase.from('cash_ledger').delete().eq('id', lastPayment.cashLedgerId);
-      }
-      if (lastPayment.subscriptionId) {
-        await supabase.from('cash_ledger').delete().eq('subscription_id', lastPayment.subscriptionId);
-        await supabase.from('subscriptions').delete().eq('id', lastPayment.subscriptionId);
-      }
-      if (lastPayment.athleteId && lastPayment.attendanceDayId) {
-        await supabase.from('attendance_entries')
-          .update({ session_paid: false })
-          .eq('attendance_day_id', lastPayment.attendanceDayId)
-          .eq('athlete_id', lastPayment.athleteId);
-      }
-      queryClient.invalidateQueries({ queryKey: ['attendance-athletes'] });
-      queryClient.invalidateQueries({ queryKey: ['cash-ledger'] });
-      queryClient.invalidateQueries({ queryKey: ['subs-history'] });
-      setLastPayment(null);
-      if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
-    } catch (e: any) {
-      toast.error('UNDO nereușit: ' + (e?.message ?? 'eroare'));
-    }
-  }
 
   const presentCount = filteredAthletes.filter((a: any) => a.entry?.present).length;
 
@@ -528,7 +479,12 @@ export default function AttendancePage() {
   };
 
   return (
-    <div className="pb-24">
+    <div className={[
+      "pb-24 min-h-screen transition-colors duration-200",
+      darkMode
+        ? "bg-[#1a1f2e] text-[#e2e8f0]"
+        : ""
+    ].join(" ")}>
       <div className="relative">
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center gap-3">
@@ -559,30 +515,6 @@ export default function AttendancePage() {
           <Settings className="h-5 w-5" />
         </Button>
       </div>
-
-      {/* ── UNDO BAR ── */}
-      {lastPayment && (
-        <div className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-2.5 shadow-sm">
-          <div className="min-w-0 flex-1">
-            <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">UNDO plată: </span>
-            <span className="text-sm font-bold text-amber-900 dark:text-amber-200">{lastPayment.label}</span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={handleUndo}
-              className="rounded-lg bg-amber-500 px-3 py-1 text-xs font-bold text-white hover:bg-amber-600 active:scale-95 transition-all"
-            >
-              ↩ Anulează
-            </button>
-            <button
-              onClick={() => setLastPayment(null)}
-              className="text-amber-500 hover:text-amber-700 text-lg leading-none"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
 
       {needsAttention.length > 0 && showNeedsAttention && (
         <div className="mx-4 mb-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
@@ -642,9 +574,13 @@ export default function AttendancePage() {
             <div
               key={athlete.id}
               onClick={() => togglePresent.mutate(athlete)}
-              className={`flex items-center justify-between rounded-lg p-3 transition-all cursor-pointer active:scale-[0.99] ${
-                isPresent ? 'athlete-row-present' : active ? 'athlete-row-should-present' : 'athlete-row-default'
-              }`}
+              className={[
+                  "flex items-center justify-between rounded-lg p-3 transition-all cursor-pointer active:scale-[0.99]",
+                  isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
+                  darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
+                  darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
+                  darkMode && !isPresent && !active ? "!bg-[#242938] !border !border-gray-700" : "",
+                ].join(" ")}
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate uppercase text-foreground/80 font-hand font-bold leading-tight">
@@ -658,15 +594,15 @@ export default function AttendancePage() {
 
               <div className="flex items-center gap-2">
                 <div
-                  className="text-right text-[11px] leading-tight tabular-nums"
+                  className="text-right text-[13px] leading-tight tabular-nums font-semibold"
                   onClick={(e) => {
                     e.stopPropagation();
                     setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
                   }}
                   title={isPerSession ? 'Per ședință' : 'Tap pentru reînnoire'}
                 >
-                  {!isPerSession && <div className={statusTextClass(cStatus)}>C: {cText}</div>}
-                  <div className={statusTextClass(gStatus)}>F: {gText}</div>
+                  {!isPerSession && <div className={statusTextClass(cStatus)}>Antrenament {cText}</div>}
+                  <div className={statusTextClass(gStatus)}>Sală {gText}</div>
                 </div>
 
                 {isPerSession && isPresent && !isPaidSession && (
@@ -950,6 +886,37 @@ return;
               <div className="mt-2 text-xs text-muted-foreground">
                 Filtrarea folosește câmpul de structură din sportiv (MAI / MAPN).
               </div>
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold mb-2">Aspect pagină</div>
+              <button
+                type="button"
+                onClick={() => setDarkMode(v => !v)}
+                className={[
+                  "flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
+                  darkMode
+                    ? "border-blue-500 bg-[#1a1f2e] text-[#e2e8f0]"
+                    : "border-border bg-background text-foreground"
+                ].join(" ")}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">{darkMode ? "🌙" : "☀️"}</span>
+                  <div className="text-left">
+                    <div className="text-sm font-bold">{darkMode ? "Dark" : "Light"}</div>
+                    <div className="text-xs opacity-60">{darkMode ? "Fundal închis, text deschis" : "Fundal deschis, text închis"}</div>
+                  </div>
+                </div>
+                <div className={[
+                  "w-12 h-6 rounded-full transition-colors relative flex-shrink-0",
+                  darkMode ? "bg-blue-500" : "bg-gray-300"
+                ].join(" ")}>
+                  <div className={[
+                    "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                    darkMode ? "translate-x-7" : "translate-x-1"
+                  ].join(" ")} />
+                </div>
+              </button>
             </div>
 
             <div className="pt-2">
