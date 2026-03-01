@@ -113,6 +113,12 @@ function kindSafe(kind: any): 'COACHING' | 'GYM' | 'UNKNOWN' {
   return 'UNKNOWN';
 }
 
+function formatDateRo(dateISO: string) {
+  const [y, m, d] = dateISO.split('-').map(Number);
+  const months = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+  return `${d} ${months[m - 1] ?? ''}`;
+}
+
 export default function AttendancePage() {
   const { coach } = useCoach();
 
@@ -123,7 +129,7 @@ export default function AttendancePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const v = localStorage.getItem('attendance_sort_mode');
-    return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'SECOND';
+    return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'FIRST';
   });
   const [structureFilter, setStructureFilter] = useState<StructureFilter>(() => {
     const v = localStorage.getItem('attendance_structure_filter');
@@ -468,7 +474,24 @@ export default function AttendancePage() {
   return (
     <div className="pb-24">
       <div className="relative">
-        <PageHeader title="Prezență Azi" subtitle={`${presentCount} prezenți`} />
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-center gap-3">
+            {/* Avatar placeholder */}
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border">
+              <span className="text-lg font-bold text-muted-foreground">
+                {String(coach ?? '?')[0].toUpperCase()}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xl font-bold leading-tight">
+                Prezență {formatDateRo(today())}
+              </div>
+              <div className="text-sm text-muted-foreground font-medium">
+                {coach ?? ''} · {presentCount} prezenți
+              </div>
+            </div>
+          </div>
+        </div>
         <Button
           type="button"
           variant="ghost"
@@ -545,11 +568,11 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-base opacity-90">{String(firstNames ?? '').toUpperCase()}</span>
-                  <span className="block text-2xl tracking-wide">{String(lastName ?? '').toUpperCase()}</span>
+                  <span className="block text-lg opacity-90">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-3xl tracking-wide">{String(lastName ?? '').toUpperCase()}</span>
                 </p>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-muted-foreground">{isPerSession ? '80/ședință' : 'Abon.'}</span>
+                  <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
                 </div>
               </div>
 

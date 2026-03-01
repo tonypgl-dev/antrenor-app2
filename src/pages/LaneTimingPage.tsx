@@ -307,7 +307,10 @@ export default function LaneTimingPage() {
 const pressTimer = useRef<number | null>(null);
   const flashTick = useRef<number | null>(null);
   const reorderTimerRef = useRef<number | null>(null);
+  const lockTimerRef = useRef<number | null>(null);
   const [committedOrder, setCommittedOrder] = useState<Record<string, number>>({});
+  const [reorderLocked, setReorderLocked] = useState(false);
+  const [reorderAnimating, setReorderAnimating] = useState(false);
 
   const [elapsed, setElapsed] = useState(0);
   const [startPending, setStartPending] = useState(false);
@@ -863,27 +866,47 @@ const pressTimer = useRef<number | null>(null);
   }, [allFinished, run?.status]);
 
 
-  // ── REORDONARE DINAMICĂ cu delay 1.5s ─────────────────────────────────
+  // ── REORDONARE DINAMICĂ cu delay 1.5s + lock 1s ──────────────────────
   useEffect(() => {
     if (run?.status !== "RUNNING") return;
     if (reorderTimerRef.current) window.clearTimeout(reorderTimerRef.current);
+    if (lockTimerRef.current) window.clearTimeout(lockTimerRef.current);
+
+    // 1.2s: start warning flash (300ms before reorder)
     reorderTimerRef.current = window.setTimeout(() => {
-      const active = (assignments as any[]).filter((a: any) => !a.is_abandoned && !derived[a.id]?.finished);
-      const ranked = [...active].sort((a: any, b: any) => {
-        const da = derived[a.id];
-        const db = derived[b.id];
-        const nA = da?.n ?? 0;
-        const nB = db?.n ?? 0;
-        if (nA !== nB) return nB - nA;
-        const projA = da?.projectedFinishMs ?? Infinity;
-        const projB = db?.projectedFinishMs ?? Infinity;
-        return projA - projB;
-      });
-      const newOrder: Record<string, number> = {};
-      ranked.forEach((a: any, i: number) => { newOrder[a.id] = i; });
-      setCommittedOrder(newOrder);
-    }, 1500);
-    return () => { if (reorderTimerRef.current) window.clearTimeout(reorderTimerRef.current); };
+      // Flash warning: gridurile se vor rearanja
+      setReorderAnimating(true);
+
+      // 300ms later: actually reorder + lock
+      lockTimerRef.current = window.setTimeout(() => {
+        const active = (assignments as any[]).filter((a: any) => !a.is_abandoned && !derived[a.id]?.finished);
+        const ranked = [...active].sort((a: any, b: any) => {
+          const da = derived[a.id];
+          const db = derived[b.id];
+          const nA = da?.n ?? 0;
+          const nB = db?.n ?? 0;
+          if (nA !== nB) return nB - nA;
+          const projA = da?.projectedFinishMs ?? Infinity;
+          const projB = db?.projectedFinishMs ?? Infinity;
+          return projA - projB;
+        });
+        const newOrder: Record<string, number> = {};
+        ranked.forEach((a: any, i: number) => { newOrder[a.id] = i; });
+        setCommittedOrder(newOrder);
+        setReorderLocked(true);
+        setReorderAnimating(false);
+
+        // Unlock after 700ms
+        lockTimerRef.current = window.setTimeout(() => {
+          setReorderLocked(false);
+        }, 700);
+      }, 300);
+    }, 1200);
+
+    return () => {
+      if (reorderTimerRef.current) window.clearTimeout(reorderTimerRef.current);
+      if (lockTimerRef.current) window.clearTimeout(lockTimerRef.current);
+    };
   }, [derived, run?.status]);
 
   const sortedAssignments = useMemo(() => {
@@ -1028,10 +1051,10 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
       pushFlash(a.athletes?.full_name ?? "Sportiv");
       setPulseId(a.id);
       window.setTimeout(() => setPulseId(null), 500);
-      playBeep(80, 880);
+      playBeep(180, 880);
       try {
         if (typeof navigator !== "undefined" && (navigator as any).vibrate) {
-          (navigator as any).vibrate(30);
+          (navigator as any).vibrate([60, 30, 60]);
         }
       } catch {
         // ignore
@@ -1461,7 +1484,14 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
 
       {/* Athletes grid */}
       <div className="px-2 pt-3">
-        <div className="grid grid-cols-3 gap-2">
+        {/* Reorder lock overlay */}
+        {reorderLocked && (
+          <div className="fixed inset-0 z-20 pointer-events-auto" />
+        )}
+        <div
+          className="grid grid-cols-3 gap-2"
+          style={{ transition: reorderAnimating ? "opacity 150ms ease" : undefined, opacity: reorderAnimating ? 0.6 : 1 }}
+        >
           {sortedAssignments.map((a: any) => {
             const d = derived[a.id];
             const pressed = pulseId === a.id;
@@ -1525,13 +1555,18 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
               <button
                 key={isCollapsed ? `${a.id}-done-${finishUi[a.id]?.movedKey ?? 0}-${isExpanded ? 1 : 0}` : a.id}
                 className={[
-                  "relative w-full rounded-xl p-3 text-left shadow-sm",
+                  "relative w-full rounded-xl p-1 text-left shadow-sm",
                   isCollapsed ? "animate-in slide-in-from-top-2 duration-200" : "",
                   className,
-                  disabled ? "opacity-80" : "active:scale-[0.99]",
+                  disabled || reorderLocked ? "opacity-80" : "active:scale-[0.99]",
                   pressed ? "ring-2 ring-offset-1 ring-primary" : "",
+                  reorderAnimating ? "ring-2 ring-yellow-400/60" : "",
                 ].join(" ")}
-                style={style}
+                style={{
+                  ...style,
+                  transition: "transform 400ms cubic-bezier(0.4,0,0.2,1), box-shadow 120ms linear, border-color 120ms linear, background-color 120ms linear",
+                  pointerEvents: reorderLocked ? "none" : undefined,
+                }}
                 onClick={() => {
                   if (showCompact) {
                     setExpandedFinished((prev) => ({ ...prev, [a.id]: true }));
@@ -1558,7 +1593,7 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
                 }}
               >
                 {/* Header name */}
-                <div className="mb-1 flex items-start justify-between gap-2">
+                <div className="mb-0 flex items-start justify-between gap-1">
                   <div className="min-w-0">
                     {canEditName ? (
                       <Input
