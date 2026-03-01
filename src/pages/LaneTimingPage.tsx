@@ -122,7 +122,20 @@ function playBeep(durationMs: number, frequency = 520) {
   }
 }
 
-// ─── GhostArc ─────────────────────────────────────────────────────────────────
+const ATHLETE_COLORS = [
+  "#60a5fa", // blue
+  "#f97316", // orange
+  "#a78bfa", // purple
+  "#34d399", // emerald
+  "#fb7185", // rose
+  "#fbbf24", // amber
+  "#22d3ee", // cyan
+  "#f472b6", // pink
+  "#a3e635", // lime
+  "#e879f9", // fuchsia
+] as const;
+
+// ─── GhostArc — individual (per card) ────────────────────────────────────────
 function GhostArc({
   size = 54,
   elapsed,
@@ -130,7 +143,9 @@ function GhostArc({
   distanceDone,
   avgPerLapNorm,
   idealLapMs,
+  hasHalfFirstSplit,
   running,
+  athleteColor = "#10b981",
 }: {
   size?: number;
   elapsed: number;
@@ -138,62 +153,122 @@ function GhostArc({
   distanceDone: number;
   avgPerLapNorm: number | null;
   idealLapMs: number;
+  hasHalfFirstSplit: boolean;
   running: boolean;
+  athleteColor?: string;
 }) {
   if (!idealLapMs || elapsed === 0) return null;
   const r = (size - 10) / 2;
   const cx = size / 2;
   const cy = size / 2;
 
-  // Ghost: where SHOULD athlete be at ideal pace (total elapsed / idealLapMs)
-  const ghostTotalLaps = elapsed / idealLapMs;
-  const ghostFrac = ghostTotalLaps % 1;
+  // For 1000m: start at ora 6 (bottom, frac=0.5); otherwise ora 12 (top, frac=0)
+  const startFrac = hasHalfFirstSplit ? 0.5 : 0;
 
-  // Athlete: distanceDone + extrapolated progress since last lap
+  const toXY = (frac: number) => {
+    const angle = frac * 2 * Math.PI - Math.PI / 2;
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+  };
+
+  // Ghost: ideal pace from startFrac
+  const ghostTotalLaps = elapsed / idealLapMs;
+  const ghostFrac = (startFrac + ghostTotalLaps) % 1;
+
+  // Athlete: distanceDone + extrapolated since last tap
   const timeSinceLast = Math.max(0, elapsed - totalElapsedAtLast);
   const perLap = avgPerLapNorm && avgPerLapNorm > 0 ? avgPerLapNorm : idealLapMs;
   const extrapolated = Math.min(0.98, timeSinceLast / perLap);
   const athleteTotalLaps = distanceDone + extrapolated;
-  const athleteFrac = athleteTotalLaps % 1;
+  const athleteFrac = (startFrac + athleteTotalLaps) % 1;
 
-  // How many full laps behind
+  // Laps behind (compare ghost vs athlete in total laps)
   const lapsBehind = Math.max(0, Math.floor(ghostTotalLaps) - Math.floor(athleteTotalLaps));
 
-  // Color: red if laps behind, orange if close, green if ahead/on-pace
-  const athleteColor =
-    lapsBehind > 0 ? "#f43f5e" :
-    athleteFrac < ghostFrac - 0.05 ? "#f59e0b" :
-    "#10b981";
-
-  const toXY = (frac: number) => {
-    const angle = frac * 2 * Math.PI - Math.PI / 2; // 0 = top
-    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
-  };
+  // Dot color: passed in from parent (per-athlete color)
   const ghostPt = toXY(ghostFrac);
   const athletePt = toXY(athleteFrac);
-
-  // Finish line tick at 12 o'clock
   const tickOuter = { x: cx, y: cy - r - 3 };
   const tickInner = { x: cx, y: cy - r + 5 };
 
   return (
     <svg width={size} height={size} className="flex-shrink-0">
-      {/* Visible track */}
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="#4b5563" strokeWidth={2.5} />
-      {/* Finish line tick at top */}
       <line x1={tickOuter.x} y1={tickOuter.y} x2={tickInner.x} y2={tickInner.y}
         stroke="#9ca3af" strokeWidth={2.5} strokeLinecap="round" />
-      {/* Ghost dot */}
       {running && <circle cx={ghostPt.x} cy={ghostPt.y} r={3} fill="#9ca3af" />}
-      {/* Athlete dot */}
       <circle cx={athletePt.x} cy={athletePt.y} r={4.5} fill={athleteColor} />
-      {/* Laps behind counter */}
       {lapsBehind > 0 && (
         <text x={cx} y={cy + 5} textAnchor="middle" fontSize="13"
           fontWeight="bold" fill="#f43f5e" fontFamily="monospace">
           -{lapsBehind}
         </text>
       )}
+    </svg>
+  );
+}
+
+// ─── SharedGhostArc — header, all athletes ───────────────────────────────────
+function SharedGhostArc({
+  size = 110,
+  elapsed,
+  athletes,
+  idealLapMs,
+  hasHalfFirstSplit,
+  running,
+}: {
+  size?: number;
+  elapsed: number;
+  athletes: { totalElapsedAtLast: number; distanceDone: number; avgPerLapNorm: number | null; colorIdx: number; finished: boolean; abandoned: boolean }[];
+  idealLapMs: number;
+  hasHalfFirstSplit: boolean;
+  running: boolean;
+}) {
+  if (!idealLapMs || elapsed === 0) return null;
+  const r = (size - 12) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const startFrac = hasHalfFirstSplit ? 0.5 : 0;
+
+  const toXY = (frac: number) => {
+    const angle = frac * 2 * Math.PI - Math.PI / 2;
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+  };
+
+  const ghostTotalLaps = elapsed / idealLapMs;
+  const ghostFrac = (startFrac + ghostTotalLaps) % 1;
+  const ghostPt = toXY(ghostFrac);
+  const tickOuter = { x: cx, y: cy - r - 4 };
+  const tickInner = { x: cx, y: cy - r + 7 };
+
+  return (
+    <svg width={size} height={size} className="flex-shrink-0">
+      {/* Track */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#374151" strokeWidth={3} />
+      {/* Finish tick at ora 12 */}
+      <line x1={tickOuter.x} y1={tickOuter.y} x2={tickInner.x} y2={tickInner.y}
+        stroke="#9ca3af" strokeWidth={3} strokeLinecap="round" />
+      {/* Ghost dot — white */}
+      {running && <circle cx={ghostPt.x} cy={ghostPt.y} r={5} fill="white" opacity={0.85} />}
+      {/* Athletes */}
+      {athletes.map((a, i) => {
+        const timeSinceLast = Math.max(0, elapsed - a.totalElapsedAtLast);
+        const perLap = a.avgPerLapNorm && a.avgPerLapNorm > 0 ? a.avgPerLapNorm : idealLapMs;
+        const extrapolated = a.finished ? 0 : Math.min(0.98, timeSinceLast / perLap);
+        const athleteTotalLaps = a.distanceDone + extrapolated;
+        const athleteFrac = (startFrac + athleteTotalLaps) % 1;
+        const pt = toXY(athleteFrac);
+        const color = ATHLETE_COLORS[a.colorIdx % ATHLETE_COLORS.length];
+        return (
+          <circle
+            key={i}
+            cx={pt.x}
+            cy={pt.y}
+            r={a.finished ? 3.5 : 5.5}
+            fill={color}
+            opacity={a.abandoned ? 0.3 : 1}
+          />
+        );
+      })}
     </svg>
   );
 }
@@ -618,6 +693,14 @@ const pressTimer = useRef<number | null>(null);
     if (!active.length) return false;
     return active.every((a: any) => derived[a.id]?.finished);
   }, [assignments, derived]);
+
+  // Stable color index per athlete (based on original sort_order)
+  const athleteColorMap = useMemo(() => {
+    const sorted = [...(assignments as any[])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const map: Record<string, number> = {};
+    sorted.forEach((a, i) => { map[a.id] = i % ATHLETE_COLORS.length; });
+    return map;
+  }, [assignments]);
 
   // Detect FINISH transitions locally (UI-only): keep full card for 3s, then collapse + move to bottom
   useEffect(() => {
@@ -1303,7 +1386,25 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
               );
             })}
           </div>
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            {/* Shared Ghost Arc */}
+            {idealLapMs > 0 && elapsed > 0 && (
+              <SharedGhostArc
+                elapsed={elapsed}
+                athletes={(assignments as any[]).map((a) => ({
+                  totalElapsedAtLast: derived[a.id]?.totalElapsedAtLast ?? 0,
+                  distanceDone: derived[a.id]?.distanceDone ?? 0,
+                  avgPerLapNorm: derived[a.id]?.avgPerLapNorm ?? null,
+                  colorIdx: athleteColorMap[a.id] ?? 0,
+                  finished: !!derived[a.id]?.finished,
+                  abandoned: !!a.is_abandoned,
+                }))}
+                idealLapMs={idealLapMs}
+                hasHalfFirstSplit={hasHalfFirstSplit}
+                running={run?.status === "RUNNING"}
+              />
+            )}
+            {/* Timer + info */}
             <div className="min-w-0 flex-1 text-center">
               <div className="text-4xl font-black tabular-nums text-white">{formatMs(elapsed)}</div>
               <div className="mt-1 text-xs text-gray-500">
@@ -1312,11 +1413,11 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
             </div>
             {/* Pause + Reset — only when race is running */}
             {run?.status === "RUNNING" && (
-              <div className="flex gap-2 flex-shrink-0">
+              <div className="flex flex-col gap-1 flex-shrink-0">
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-10 px-3 border-yellow-600 text-yellow-400 hover:bg-yellow-900/30"
+                  className="h-9 px-2 text-xs border-yellow-600 text-yellow-400 hover:bg-yellow-900/30"
                   onClick={pauseRun}
                 >
                   ⏸ Pauză
@@ -1324,7 +1425,7 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-10 px-3 border-red-700 text-red-400 hover:bg-red-900/30"
+                  className="h-9 px-2 text-xs border-red-700 text-red-400 hover:bg-red-900/30"
                   onClick={() => setResetDialogOpen(true)}
                 >
                   ↺ Reset
@@ -1468,9 +1569,12 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
                         placeholder={fullName(a)}
                       />
                     ) : (
-                      <div className={["truncate text-2xl font-black tracking-wide leading-tight", textClass].join(" ")}>
-                        {mainName}
-                        {suffix ? <span className="ml-1 text-sm font-semibold opacity-60">{suffix}</span> : null}
+                      <div className="flex items-center gap-1">
+                        <span style={{ color: ATHLETE_COLORS[athleteColorMap[a.id] ?? 0] }} className="text-xs leading-none flex-shrink-0">●</span>
+                        <div className={["truncate text-2xl font-black tracking-wide leading-tight", textClass].join(" ")}>
+                          {mainName}
+                          {suffix ? <span className="ml-1 text-sm font-semibold opacity-60">{suffix}</span> : null}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1526,7 +1630,9 @@ retryLapEventIdRef.current[pendingKey] = { id: clientEventId, ts: nowTs };
                       distanceDone={d?.distanceDone ?? 0}
                       avgPerLapNorm={d?.avgPerLapNorm ?? null}
                       idealLapMs={idealLapMs}
+                      hasHalfFirstSplit={hasHalfFirstSplit}
                       running={run?.status === "RUNNING"}
+                      athleteColor={ATHLETE_COLORS[athleteColorMap[a.id] ?? 0]}
                     />
                   </div>
                 </div>                )}
