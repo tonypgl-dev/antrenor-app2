@@ -504,12 +504,49 @@ export default function AttendancePage() {
         </Button>
       </div>
 
-      {needsAttention.length > 0 && showNeedsAttention && (
-        <div className="mx-4 mb-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
-          <button onClick={() => setShowNeedsAttention(!showNeedsAttention)} className="flex items-center gap-2 text-sm font-semibold text-warning">
-            <AlertTriangle className="h-4 w-4" />
-            Necesită atenție ({needsAttention.length})
+      {needsAttention.length > 0 && (
+        <div className="mx-4 mb-3 rounded-lg border border-warning/30 bg-warning/5 overflow-hidden">
+          <button
+            onClick={() => setShowNeedsAttention(v => !v)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-warning"
+          >
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              Necesită atenție ({needsAttention.filter((a: any) => {
+                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                return c === 'expired' || g === 'expired';
+              }).length} expirați)
+            </span>
+            <span className="text-xs opacity-70">{showNeedsAttention ? '▲' : '▼'}</span>
           </button>
+
+          {showNeedsAttention && (
+            <div className="px-3 pb-3 space-y-1.5 border-t border-warning/20 pt-2">
+              {needsAttention
+                .filter((a: any) => {
+                  const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                  const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                  return c === 'expired' || g === 'expired';
+                })
+                .map((a: any) => {
+                  const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                  const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                  const name = String(a.full_name ?? '').trim();
+                  const parts: string[] = [];
+                  if (c === 'expired') parts.push('abonamentul antrenament expirat');
+                  if (g === 'expired') parts.push('sala expirată');
+                  return (
+                    <div key={a.id} className="text-sm flex items-start gap-1.5">
+                      <span className="flex-shrink-0 mt-0.5">{c === 'expired' ? '🔴' : '🟠'}</span>
+                      <span className="text-warning/90">
+                        <span className="font-bold">{name}</span> are {parts.join(' și ')}.
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
@@ -568,8 +605,16 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-lg opacity-90">{String(firstNames ?? '').toUpperCase()}</span>
-                  <span className="block text-3xl tracking-wide">{String(lastName ?? '').toUpperCase()}</span>
+                  <span className="block text-xl opacity-90">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="flex items-center gap-1.5 text-4xl tracking-wide">
+                    <span className="truncate">{String(lastName ?? '').toUpperCase()}</span>
+                    {!isPerSession && cStatus === 'expired' && (
+                      <span className="text-rose-500 text-2xl font-black flex-shrink-0">!</span>
+                    )}
+                    {!isPerSession && cStatus !== 'expired' && gStatus === 'expired' && (
+                      <span className="text-orange-400 text-2xl font-black flex-shrink-0">!</span>
+                    )}
+                  </span>
                 </p>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
@@ -578,7 +623,7 @@ export default function AttendancePage() {
 
               <div className="flex items-center gap-2">
                 <div
-                  className="text-right text-[11px] leading-tight tabular-nums"
+                  className="text-right text-[13px] leading-snug tabular-nums font-semibold"
                   onClick={(e) => {
                     e.stopPropagation();
                     setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
