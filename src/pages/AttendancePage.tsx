@@ -604,18 +604,18 @@ export default function AttendancePage() {
               }`}
             >
               <div className="min-w-0 flex-1">
-                <p className="truncate uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-xl opacity-90">{String(firstNames ?? '').toUpperCase()}</span>
-                  <span className="flex items-center gap-1.5 text-4xl tracking-wide">
-                    <span className="truncate">{String(lastName ?? '').toUpperCase()}</span>
+                <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
+                  <span className="block text-xl opacity-90 truncate">{String(firstNames ?? '').toUpperCase()}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-4xl tracking-wide truncate">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
-                      <span className="text-rose-500 text-2xl font-black flex-shrink-0">!</span>
+                      <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
                     {!isPerSession && gStatus === 'expired' && (
-                      <span className="text-orange-400 text-2xl font-black flex-shrink-0">!</span>
+                      <span className="text-orange-400 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
-                  </span>
-                </p>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
                 </div>
