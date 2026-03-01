@@ -623,6 +623,11 @@ export default function AttendancePage() {
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
                 </div>
+                {/* DEBUG */}
+                <div className="text-[10px] text-blue-400 mt-0.5 break-all">
+                  {(athlete.subscriptions||[]).map((s:any)=>`${s.kind}|${s.expires_at}`).join(' · ')}
+                  {' '}[gSt:{gStatus} cSt:{cStatus}]
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
