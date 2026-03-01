@@ -119,6 +119,12 @@ function formatDateRo(dateISO: string) {
   return `${d} ${months[m - 1] ?? ''}`;
 }
 
+function formatDateRo(dateISO: string) {
+  const [y, m, d] = dateISO.split('-').map(Number);
+  const months = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+  return `${d} ${months[m - 1] ?? ''}`;
+}
+
 export default function AttendancePage() {
   const { coach } = useCoach();
 
@@ -127,6 +133,8 @@ export default function AttendancePage() {
   type StructureFilter = 'ALL' | 'MAI' | 'MAPN';
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('attendance_dark_mode') === 'true');
+  useEffect(() => { localStorage.setItem('attendance_dark_mode', String(darkMode)); }, [darkMode]);
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const v = localStorage.getItem('attendance_sort_mode');
     return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'FIRST';
@@ -472,7 +480,7 @@ export default function AttendancePage() {
   };
 
   return (
-    <div className="pb-24">
+    <div className={["pb-24 min-h-screen transition-colors duration-200", darkMode ? "bg-[#1a1f2e] text-[#e2e8f0]" : ""].join(" ")}>
       <div className="relative">
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center gap-3">
@@ -506,10 +514,8 @@ export default function AttendancePage() {
 
       {needsAttention.length > 0 && (
         <div className="mx-4 mb-3 rounded-lg border border-warning/30 bg-warning/5 overflow-hidden">
-          <button
-            onClick={() => setShowNeedsAttention(v => !v)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-warning"
-          >
+          <button onClick={() => setShowNeedsAttention(v => !v)}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-warning">
             <span className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 flex-shrink-0" />
               Necesită atenție ({needsAttention.filter((a: any) => {
@@ -520,31 +526,25 @@ export default function AttendancePage() {
             </span>
             <span className="text-xs opacity-70">{showNeedsAttention ? '▲' : '▼'}</span>
           </button>
-
           {showNeedsAttention && (
             <div className="px-3 pb-3 space-y-1.5 border-t border-warning/20 pt-2">
-              {needsAttention
-                .filter((a: any) => {
-                  const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
-                  const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
-                  return c === 'expired' || g === 'expired';
-                })
-                .map((a: any) => {
-                  const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
-                  const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
-                  const name = String(a.full_name ?? '').trim();
-                  const parts: string[] = [];
-                  if (c === 'expired') parts.push('abonamentul antrenament expirat');
-                  if (g === 'expired') parts.push('sala expirată');
-                  return (
-                    <div key={a.id} className="text-sm flex items-start gap-1.5">
-                      <span className="flex-shrink-0 mt-0.5">{c === 'expired' ? '🔴' : '🟠'}</span>
-                      <span className="text-warning/90">
-                        <span className="font-bold">{name}</span> are {parts.join(' și ')}.
-                      </span>
-                    </div>
-                  );
-                })}
+              {needsAttention.filter((a: any) => {
+                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                return c === 'expired' || g === 'expired';
+              }).map((a: any) => {
+                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                const parts: string[] = [];
+                if (c === 'expired') parts.push('antrenament expirat');
+                if (g === 'expired') parts.push('sala expirată');
+                return (
+                  <div key={a.id} className="text-sm flex items-start gap-1.5">
+                    <span className="flex-shrink-0">{c === 'expired' ? '🔴' : '🟠'}</span>
+                    <span className="text-warning/90"><span className="font-bold">{String(a.full_name ?? '')}</span> are {parts.join(' și ')}.</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -599,9 +599,13 @@ export default function AttendancePage() {
             <div
               key={athlete.id}
               onClick={() => togglePresent.mutate(athlete)}
-              className={`flex items-center justify-between rounded-lg p-3 transition-all cursor-pointer active:scale-[0.99] ${
-                isPresent ? 'athlete-row-present' : active ? 'athlete-row-should-present' : 'athlete-row-default'
-              }`}
+              className={[
+                "flex items-center justify-between rounded-lg p-3 transition-all cursor-pointer active:scale-[0.99]",
+                isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
+                darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
+                darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
+                darkMode && !isPresent && !active ? "!bg-[#242938] !border !border-gray-700" : "",
+              ].join(" ")}
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
@@ -649,9 +653,9 @@ export default function AttendancePage() {
                 )}
 
                 {/* Quick renewal buttons (show when needs renewal) */}
-                {isPresent && (gStatus !== 'valid' || cStatus !== 'valid') && (
+                {isPresent && (
                   <>
-                    {(gStatus === 'expired' || gStatus === 'none') && (
+                    {(gStatus === 'expired' || gStatus === 'expiring' || gStatus === 'none') && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -917,10 +921,25 @@ return;
               </div>
             </div>
 
+            <div>
+              <div className="text-sm font-semibold mb-2">Aspect pagină</div>
+              <button type="button" onClick={() => setDarkMode(v => !v)}
+                className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
+                  darkMode ? "border-blue-500 bg-[#1a1f2e] text-[#e2e8f0]" : "border-border bg-background text-foreground"].join(" ")}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">{darkMode ? "🌙" : "☀️"}</span>
+                  <div className="text-left">
+                    <div className="text-sm font-bold">{darkMode ? "Dark" : "Light"}</div>
+                    <div className="text-xs opacity-60">{darkMode ? "Fundal închis, text deschis" : "Fundal deschis, text închis"}</div>
+                  </div>
+                </div>
+                <div className={["w-12 h-6 rounded-full transition-colors relative flex-shrink-0", darkMode ? "bg-blue-500" : "bg-gray-300"].join(" ")}>
+                  <div className={["absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", darkMode ? "translate-x-7" : "translate-x-1"].join(" ")} />
+                </div>
+              </button>
+            </div>
             <div className="pt-2">
-              <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>
-                Închide
-              </Button>
+              <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
             </div>
           </div>
         </SheetContent>
