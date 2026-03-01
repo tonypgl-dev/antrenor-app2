@@ -534,7 +534,7 @@ export default function AttendancePage() {
                   const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
                   const name = String(a.full_name ?? '').trim();
                   const parts: string[] = [];
-                  if (c === 'expired') parts.push('abonamentul antrenament expirat');
+                  if (c === 'expired') parts.push('abonamentul expirat');
                   if (g === 'expired') parts.push('sala expirată');
                   return (
                     <div key={a.id} className="text-sm text-warning/90 flex items-start gap-1.5">
