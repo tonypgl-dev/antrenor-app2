@@ -1,666 +1,730 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Trash2, Pencil, Settings } from "lucide-react";
-import { toast } from "sonner";
-import PageHeader from "@/components/PageHeader";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import React, { useState, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import PageHeader from '@/components/PageHeader';
+import AthleteAvatar from '@/components/AthleteAvatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
+import { ArrowLeft, Camera, Plus, ChevronDown, ChevronUp, Pencil, Check, X } from 'lucide-react';
+import type { CoachName } from '@/lib/coach';
 
-interface AthleteFormProps {
-  athlete?: any;
-  coach: string;
-  onClose: () => void;
-}
-
-function formatShortRo(dateISO?: string | null) {
-  if (!dateISO) return "—";
-  const parts = String(dateISO).split("-").map((x) => Number(x));
-  if (parts.length !== 3) return "—";
-  const [, m, d] = parts;
-  if (!m || !d) return "—";
-  const months = ["Ian", "Feb", "Mar", "Apr", "Mai", "Iun", "Iul", "Aug", "Sep", "Oct", "Noi", "Dec"];
-  return `${d} ${months[m - 1] ?? ""}`.trim();
-}
-
-type SubStatus = "none" | "valid" | "expiring" | "expired";
-
-function getSubStatus(expiresISO?: string | null): SubStatus {
-  if (!expiresISO) return "none";
-  const expires = new Date(`${expiresISO}T00:00:00`).getTime();
-  if (!Number.isFinite(expires)) return "none";
-  const now = new Date();
-  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const diffDays = Math.floor((expires - todayMidnight) / (24 * 60 * 60 * 1000));
-  if (diffDays < 0) return "expired";
-  if (diffDays <= 4) return "expiring";
-  return "valid";
-}
-
-function statusTextClass(s: SubStatus) {
-  if (s === "valid") return "text-emerald-600";
-  if (s === "expiring") return "text-orange-500";
-  if (s === "expired") return "text-rose-600";
-  return "text-muted-foreground";
-}
-
-type SubRow = {
-  id: string;
-  athlete_id: string;
-  kind: string | null;
-  start_date: string;
-  expires_at: string;
-  price_lei: number;
-  created_at?: string;
-   hidden_from_history?: boolean;
-};
-
-function kindLabel(kind: string) {
-  const k = String(kind || "").toUpperCase();
-  if (k === "COACHING") return "Coaching";
-  if (k === "GYM" || k === "FACILITY") return "Facility";
-  return "—";
-}
-
-function kindSafe(kind: string | null): "COACHING" | "GYM" | "UNKNOWN" {
-  const k = String(kind || "").toUpperCase();
-  if (k === "COACHING") return "COACHING";
-  if (k === "GYM" || k === "FACILITY") return "GYM";
-  return "UNKNOWN";
-}
+// ─── helpers ────────────────────────────────────────────────────────────────
 
 function todayISO() {
-  return new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
-export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProps) {
-  const isEdit = !!athlete;
-  const queryClient = useQueryClient();
+function addMonthsISO(dateISO: string, months: number): string {
+  const d = new Date(dateISO + 'T00:00:00');
+  d.setMonth(d.getMonth() + months);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
-  const [form, setForm] = useState({
-    full_name: athlete?.full_name || "",
-    phone: athlete?.phone || "",
-    birth_date: athlete?.birth_date || "",
-    structure: athlete?.structure || "",
-    payment_mode: athlete?.payment_mode || "PER_SESSION",
-    default_race: athlete?.default_race ?? "NONE",
-    email: athlete?.email || "",
-    notes: athlete?.notes || "",
-  });
+function addDaysISO(dateISO: string, days: number): string {
+  const d = new Date(dateISO + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
-  const update = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }));
+function formatRo(dateISO?: string | null) {
+  if (!dateISO) return '—';
+  const [y, m, d] = String(dateISO).split('-').map(Number);
+  if (!y || !m || !d) return '—';
+  const months = ['Ian', 'Feb', 'Mar', 'Apr', 'Mai', 'Iun', 'Iul', 'Aug', 'Sep', 'Oct', 'Noi', 'Dec'];
+  return `${d} ${months[m - 1]} ${y}`;
+}
 
-  const [historyAdminMode, setHistoryAdminMode] = useState(false);
-  const [showAllHistory, setShowAllHistory] = useState(false);
+function getSubStatus(expiresAt?: string | null): 'active' | 'expiring' | 'expired' | 'none' {
+  if (!expiresAt) return 'none';
+  const today = todayISO();
+  if (expiresAt < today) return 'expired';
+  const diffDays = Math.ceil(
+    (new Date(expiresAt + 'T00:00:00').getTime() - new Date(today + 'T00:00:00').getTime()) /
+      (1000 * 60 * 60 * 24),
+  );
+  return diffDays <= 7 ? 'expiring' : 'active';
+}
 
-  // ------------------ subscriptions history ------------------
+function kindSafe(kind: any): 'COACHING' | 'GYM' | 'UNKNOWN' {
+  const k = String(kind ?? '').toUpperCase();
+  if (k === 'COACHING') return 'COACHING';
+  if (k === 'GYM' || k === 'FACILITY') return 'GYM';
+  return 'UNKNOWN';
+}
 
-  // TODO: SQL:
-  // alter table public.subscriptions add column if not exists hidden_from_history boolean not null default false;
-  const { data: subs = [], isLoading: subsLoading } = useQuery<SubRow[]>({
-    queryKey: ["subs-history", athlete?.id, showAllHistory ? "all" : "visible"],
-    enabled: !!athlete?.id,
-    queryFn: async () => {
-      let query = supabase
-        .from("subscriptions")
-        .select("id, athlete_id, kind, start_date, expires_at, price_lei, created_at, hidden_from_history")
-        .eq("athlete_id", athlete.id);
+// ─── SubEditRow ──────────────────────────────────────────────────────────────
+// Un rând de abonament cu editare inline: starts_at / expires_at / price_lei
+// La salvare, dacă suma diferă → actualizează și cash_ledger
 
-      if (!showAllHistory) {
-        query = query.eq("hidden_from_history", false);
-      }
+interface SubEditRowProps {
+  sub: any;
+  onSaved: () => void;
+}
 
-      const { data, error } = await query.order("start_date", { ascending: false });
+function SubEditRow({ sub, onSaved }: SubEditRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [startsAt, setStartsAt] = useState<string>(sub.starts_at ?? '');
+  const [expiresAt, setExpiresAt] = useState<string>(sub.expires_at ?? '');
+  const [priceLei, setPriceLei] = useState<string>(sub.price_lei != null ? String(sub.price_lei) : '');
+  const [saving, setSaving] = useState(false);
 
-      if (error) throw error;
-      return (data as any) ?? [];
-    },
-  });
-
-  const coachingSubs = useMemo(() => subs.filter((s) => kindSafe(s.kind) === "COACHING"), [subs]);
-  const gymSubs = useMemo(() => subs.filter((s) => kindSafe(s.kind) === "GYM"), [subs]);
-
-  const latestCoaching = coachingSubs[0] ?? null;
-  const latestGym = gymSubs[0] ?? null;
-
-  const coachingStatus = getSubStatus(latestCoaching?.expires_at);
-  const facilityStatus = getSubStatus(latestGym?.expires_at);
-
-  // ------------------ edit last subscription row ------------------
-
-  const [editSubOpen, setEditSubOpen] = useState(false);
-  const [editSub, setEditSub] = useState<SubRow | null>(null);
-  const [editStartISO, setEditStartISO] = useState("");
-  const [editEndISO, setEditEndISO] = useState("");
-  const [editPriceLei, setEditPriceLei] = useState<string>("");
-
-  const openEditSub = (row: SubRow) => {
-    setEditSub(row);
-    setEditStartISO(row.start_date ?? "");
-    setEditEndISO(row.expires_at ?? "");
-    setEditPriceLei(String(row.price_lei ?? ""));
-    setEditSubOpen(true);
+  const status = getSubStatus(sub.expires_at);
+  const statusConfig = {
+    active:   { label: 'Activ',         cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+    expiring: { label: 'Expiră curând', cls: 'bg-amber-50  text-amber-700  border-amber-100'  },
+    expired:  { label: 'Expirat',       cls: 'bg-gray-100  text-gray-500   border-gray-200'   },
+    none:     { label: '—',             cls: 'bg-gray-100  text-gray-400   border-gray-200'   },
   };
+  const cfg = statusConfig[status];
 
-  /**
-   * Updates:
-   * - subscriptions row: start_date, expires_at, price_lei
-   * - cash_ledger (best effort): update latest matching row (athlete_id + type=kind)
-   *
-   * NOTE:
-   * Your cash_ledger schema (from AttendancePage) uses:
-   * athlete_id, athlete_name, type, amount, date, created_by_coach
-   * There is no FK to subscriptions, so we update the latest row for that athlete+type.
-   */
-  const saveSubEditMutation = useMutation({
-    mutationFn: async () => {
-      if (!editSub) return;
-
-      const price = Number(editPriceLei);
-      if (!Number.isFinite(price) || price < 0) throw new Error("Suma invalidă");
-
-      if (!editStartISO || !editEndISO) throw new Error("Completează start și final");
-
-      // Update subscription row
-      const { error: subErr } = await supabase
-        .from("subscriptions")
-        .update({ start_date: editStartISO, expires_at: editEndISO, price_lei: price })
-        .eq("id", editSub.id);
-
-      if (subErr) throw subErr;
-
-      // Best-effort cash update
-      const k = kindSafe(editSub.kind);
-      if (k === "UNKNOWN") return;
-
-      const shouldUpdateCash = window.confirm("Vrei să edităm suma în baza de date (cash)?");
-
-      if (shouldUpdateCash) {
-        const { data: cashRow, error: cashSelErr } = await supabase
-          .from("cash_ledger")
-          .select("id, amount, date")
-          .eq("athlete_id", editSub.athlete_id)
-          .eq("type", k)
-          .order("date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (cashSelErr) {
-          // don't fail the whole mutation
-          console.warn("cash_ledger select failed:", cashSelErr.message);
-        } else if (cashRow?.id) {
-          const { error: cashUpdErr } = await supabase.from("cash_ledger").update({ amount: price }).eq("id", cashRow.id);
-          if (cashUpdErr) {
-            console.warn("cash_ledger update failed:", cashUpdErr.message);
-          }
-        }
-      }
-    },
-    onSuccess: () => {
-      toast.success("Abonament actualizat");
-      setEditSubOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
-      queryClient.invalidateQueries({ queryKey: ["athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
-    },
-    onError: (e: any) => toast.error(e?.message ?? "Eroare editare"),
-  });
-
-  const hideSubMutation = useMutation({
-    mutationFn: async (row: SubRow) => {
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({ hidden_from_history: true })
-        .eq("id", row.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Abonament ascuns din istoric");
-      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
-      queryClient.invalidateQueries({ queryKey: ["athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
-    },
-    onError: (e: any) => toast.error(e?.message ?? "Eroare la ascundere abonament"),
-  });
-
-  const unhideSubMutation = useMutation({
-    mutationFn: async (row: SubRow) => {
-      const { error } = await supabase
-        .from("subscriptions")
-        .update({ hidden_from_history: false })
-        .eq("id", row.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Abonament reafișat în istoric");
-      queryClient.invalidateQueries({ queryKey: ["subs-history"] });
-      queryClient.invalidateQueries({ queryKey: ["athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
-    },
-    onError: (e: any) => toast.error(e?.message ?? "Eroare la reafișare abonament"),
-  });
-
-  // ------------------ one click extend (atomic, multi-device safe) ------------------
-
-  async function extendOneClick(kind: "COACHING" | "GYM", priceLei: number) {
-    if (!athlete?.id) return;
-
-    const { error: rpcErr } = await supabase.rpc(
-      "extend_subscription",
-      {
-        p_athlete_id: athlete.id,
-        p_kind: kind,
-        p_days: 30,
-        p_price_lei: priceLei,
-        p_created_by: coach,
-      } as any
-    );
-
-    if (rpcErr) {
-      toast.error(rpcErr.message);
-      return;
-    }
-
-    const { error: cashErr } = await supabase.from("cash_ledger").insert({
-      athlete_id: athlete.id,
-      athlete_name: athlete.full_name,
-      type: kind,
-      amount: priceLei,
-      date: todayISO(),
-      created_by_coach: coach,
-    } as any);
-
-    if (cashErr) {
-      console.warn("cash_ledger insert failed:", cashErr.message);
-      toast.error("Cash insert: " + (cashErr.message ?? "eroare necunoscută"));
-    }
-
-    // If athlete was PER_SESSION and we created a COACHING subscription, auto-switch payment mode
-    if (athlete?.payment_mode === "PER_SESSION" && kind === "COACHING") {
-      const { error: pmErr } = await supabase
-        .from("athletes")
-        .update({ payment_mode: "SUBSCRIPTION" } as any)
-        .eq("id", athlete.id);
-      if (pmErr) {
-        console.warn("Failed to update payment_mode", pmErr);
-      } else {
-        toast.success(`${athlete.full_name} a fost trecut(ă) pe tip de plată Abonament. Pentru a reveni la "la ședință", intră în pagina Sportivi.`);
-      }
-    }
-
-    toast.success("Abonament prelungit");
-    queryClient.invalidateQueries({ queryKey: ["subs-history"] });
-    queryClient.invalidateQueries({ queryKey: ["athletes"] });
-    queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
-    queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
+  function cancelEdit() {
+    setStartsAt(sub.starts_at ?? '');
+    setExpiresAt(sub.expires_at ?? '');
+    setPriceLei(sub.price_lei != null ? String(sub.price_lei) : '');
+    setEditing(false);
   }
 
-  // ------------------ save athlete fields (not subscriptions) ------------------
+  async function handleSave() {
+    if (!startsAt || !expiresAt) { toast.error('Completează ambele date'); return; }
+    if (startsAt > expiresAt)    { toast.error('Start nu poate fi după expirare'); return; }
 
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        ...form,
-        structure: form.structure || null,
-        birth_date: form.birth_date || null,
-        phone: form.phone || null,
-        email: form.email || null,
-        notes: form.notes || null,
-        default_race: form.default_race === "NONE" ? null : form.default_race,
-        created_by_coach: coach,
-      };
+    setSaving(true);
+    try {
+      const newPrice = priceLei !== '' ? Number(priceLei) : null;
+      const oldPrice = sub.price_lei != null ? Number(sub.price_lei) : null;
+      const priceChanged = newPrice !== null && newPrice !== oldPrice;
 
-      if (isEdit) {
-        const { error } = await supabase.from("athletes").update(payload).eq("id", athlete.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("athletes").insert(payload);
-        if (error) throw error;
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["athletes"] });
-      queryClient.invalidateQueries({ queryKey: ["attendance-athletes"] });
-      toast.success(isEdit ? "Sportiv actualizat" : "Sportiv adăugat");
-      onClose();
-    },
-    onError: (e: any) => toast.error(e?.message ?? "Eroare la salvare"),
-  });
+      // 1. Actualizează subscriptions
+      const { error: subErr } = await supabase
+        .from('subscriptions')
+        .update({
+          starts_at: startsAt,
+          expires_at: expiresAt,
+          ...(newPrice !== null ? { price_lei: newPrice } : {}),
+        } as any)
+        .eq('id', sub.id);
+      if (subErr) throw subErr;
 
-  const archiveMutation = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.from("athletes").update({ archived: true }).eq("id", athlete.id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["athletes"] });
-      toast.success("Sportiv arhivat");
-      onClose();
-    },
-    onError: (e: any) => toast.error(e?.message ?? "Eroare arhivare"),
-  });
+      // 2. Dacă suma s-a schimbat → actualizează cash_ledger (coloana amount)
+      //    Cautăm înregistrarea după subscription_id (dacă există câmpul) sau
+      //    după referință directă la sub.id
+      if (priceChanged) {
+        const { error: cashErr } = await supabase
+          .from('cash_ledger')
+          .update({ amount: newPrice } as any)
+          .eq('subscription_id', sub.id);
 
-  return (
-    <div className="pb-20 animate-slide-up">
-      <PageHeader
-        title={isEdit ? "Editare sportiv" : "Sportiv nou"}
-        action={
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+        if (cashErr) {
+          // Nu blocăm operația — cash_ledger poate să nu aibă subscription_id
+          console.warn('cash_ledger update warn:', cashErr.message);
+          toast.warning(`Abonament salvat. Cash neactualizat: ${cashErr.message}`);
+        } else {
+          toast.success(
+            `Salvat ✓ — suma actualizată ${oldPrice ?? '?'} → ${newPrice} RON (și în Cash)`,
+          );
         }
-      />
+      } else {
+        toast.success('Abonament actualizat');
+      }
 
-      <div className="space-y-4 px-4">
+      setEditing(false);
+      onSaved();
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Eroare salvare');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── View mode ─────────────────────────────────────────────────────────────
+  if (!editing) {
+    return (
+      <div className="flex items-center justify-between px-4 py-3 gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-gray-700 tabular-nums">
+            {formatRo(sub.starts_at)}
+            <span className="text-gray-400 mx-1.5">→</span>
+            {formatRo(sub.expires_at)}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {sub.created_by_coach && (
+              <span className="text-xs text-gray-400">de {sub.created_by_coach}</span>
+            )}
+            {sub.price_lei != null && (
+              <span className="text-xs font-bold text-gray-600">{sub.price_lei} RON</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
+            {cfg.label}
+          </span>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="h-7 w-7 flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+            title="Editează"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Edit mode ─────────────────────────────────────────────────────────────
+  return (
+    <div className="px-4 py-3 bg-indigo-50/60 border-l-4 border-indigo-400 space-y-2.5">
+      <div className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Editare abonament</div>
+
+      <div className="grid grid-cols-2 gap-2">
         <div>
-          <Label>Nume complet *</Label>
-          <Input value={form.full_name} onChange={(e) => update("full_name", e.target.value)} placeholder="Popescu Mihai" />
+          <label className="text-xs text-gray-500 mb-0.5 block">Data start</label>
+          <input
+            type="date"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400"
+          />
         </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Telefon</Label>
-            <Input
-              value={form.phone}
-              onChange={(e) => update("phone", e.target.value.replace(/[^\d]/g, ""))}
-              type="tel"
-              inputMode="numeric"
-              pattern="[0-9]*"
-            />
-          </div>
-          <div>
-            <Label>Data nașterii</Label>
-            <Input value={form.birth_date} onChange={(e) => update("birth_date", e.target.value)} type="date" />
-          </div>
-        </div>
-
         <div>
-          <Label>Structură</Label>
-          <Select value={form.structure} onValueChange={(v) => update("structure", v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Selectează" />
-            </SelectTrigger>
-            <SelectContent>
-              {["MAI", "MAPN", "IGSU", "SRI", "Other"].map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <label className="text-xs text-gray-500 mb-0.5 block">Data expirare</label>
+          <input
+            type="date"
+            value={expiresAt}
+            onChange={(e) => setExpiresAt(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400"
+          />
         </div>
+      </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Mod plată</Label>
-            <Select value={form.payment_mode} onValueChange={(v) => update("payment_mode", v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="PER_SESSION">Per ședință</SelectItem>
-                <SelectItem value="SUBSCRIPTION">Abonament</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Cursă implicită</Label>
-            <Select value={form.default_race} onValueChange={(v) => update("default_race", v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="NONE">Nu intră automat</SelectItem>
-                <SelectItem value="1000m">1000m</SelectItem>
-                <SelectItem value="2000m">2000m</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {/* Subscriptions */}
-        {isEdit && (
-          <div className="rounded-xl border bg-card p-3 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold text-sm">Abonamente</div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant={historyAdminMode ? "outline" : "ghost"}
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setHistoryAdminMode((v) => !v)}
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setShowAllHistory((v) => !v)}
-                  disabled={!historyAdminMode}
-                >
-                  Arată toate
-                </Button>
-              </div>
-            </div>
-
-            {/* Current status */}
-            <div className="text-[12px] leading-relaxed">
-              <div className={statusTextClass(coachingStatus)}>
-                Coaching curent: {latestCoaching?.expires_at ? formatShortRo(latestCoaching.expires_at) : "—"}
-                {coachingStatus === "expired"
-                  ? " (expirat)"
-                  : coachingStatus === "expiring"
-                    ? " (expiră curând)"
-                    : coachingStatus === "valid"
-                      ? " (valabil)"
-                      : ""}
-              </div>
-              <div className={statusTextClass(facilityStatus)}>
-                Facility curent: {latestGym?.expires_at ? formatShortRo(latestGym.expires_at) : "—"}
-                {facilityStatus === "expired"
-                  ? " (expirat)"
-                  : facilityStatus === "expiring"
-                    ? " (expiră curând)"
-                    : facilityStatus === "valid"
-                      ? " (valabil)"
-                      : ""}
-              </div>
-            </div>
-
-            {/* One-click extend */}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" onClick={() => extendOneClick("COACHING", 800)}>
-                Abonament (+30 zile)
-              </Button>
-              <Button variant="outline" onClick={() => extendOneClick("GYM", 120)}>
-                Sala (+30 zile)
-              </Button>
-            </div>
-
-            <div className="h-px bg-border" />
-
-            {/* History table */}
-            <div className="space-y-2">
-              <div className="text-xs text-muted-foreground">Istoric abonamente</div>
-
-              {subsLoading ? (
-                <div className="text-sm text-muted-foreground">Se încarcă…</div>
-              ) : subs.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Nu există abonamente încă.</div>
-              ) : (
-                <div className="space-y-1">
-                  {subs
-                    .slice()
-                    .reverse()
-                    .map((s, idx, arr) => {
-                      const isLast = idx === arr.length - 1;
-                      const isHidden = !!s.hidden_from_history;
-                      const rowClasses =
-                        "flex items-center justify-between rounded-lg border px-2 py-2 text-[12px]" +
-                        (historyAdminMode && showAllHistory && isHidden ? " opacity-60" : "");
-                      return (
-                        <div key={s.id} className={rowClasses}>
-                          <div className="min-w-0">
-                            <div className="font-semibold">
-                              {kindLabel(s.kind || "")}
-                              {isLast ? <span className="ml-2 text-[11px] text-muted-foreground">(ultimul)</span> : null}
-                            </div>
-                            <div className="text-muted-foreground tabular-nums">
-                              {s.start_date} → {s.expires_at} • {s.price_lei} RON
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            {historyAdminMode &&
-                              (isHidden && showAllHistory ? (
-                                <Button
-                                  variant="outline"
-                                  size="xs"
-                                  className="h-7 px-2 text-[11px]"
-                                  onClick={() => unhideSubMutation.mutate(s)}
-                                >
-                                  Reafișează
-                                </Button>
-                              ) : (
-                                !isHidden && (
-                                  <Button
-                                    variant="outline"
-                                    size="xs"
-                                    className="h-7 px-2 text-[11px] text-red-600 border-red-200 hover:bg-red-50"
-                                    onClick={() => hideSubMutation.mutate(s)}
-                                  >
-                                    X
-                                  </Button>
-                                )
-                              ))}
-
-                            {(historyAdminMode || isLast) && (
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditSub(s)}>
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <Label>Email</Label>
-          <Input value={form.email} onChange={(e) => update("email", e.target.value)} type="email" />
-        </div>
-
-        <div>
-          <Label>Notițe</Label>
-          <Textarea value={form.notes} onChange={(e) => update("notes", e.target.value)} rows={3} />
-        </div>
-
-        <Button className="w-full" onClick={() => saveMutation.mutate()} disabled={!form.full_name || saveMutation.isPending}>
-          {saveMutation.isPending ? "Se salvează..." : isEdit ? "Actualizează" : "Adaugă sportiv"}
-        </Button>
-
-        {isEdit && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" className="w-full text-destructive">
-                <Trash2 className="mr-2 h-4 w-4" /> Arhivează sportiv
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Arhivează sportiv?</AlertDialogTitle>
-                <AlertDialogDescription>{athlete.full_name} va fi mutat în arhivă. Poți restaura oricând.</AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Anulează</AlertDialogCancel>
-                <AlertDialogAction onClick={() => archiveMutation.mutate()}>Arhivează</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+      <div>
+        <label className="text-xs text-gray-500 mb-0.5 block">Sumă (RON)</label>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          value={priceLei}
+          onChange={(e) => setPriceLei(e.target.value)}
+          placeholder="ex: 800"
+          className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400"
+        />
+        {priceLei !== '' && String(sub.price_lei ?? '') !== priceLei && (
+          <p className="text-xs text-amber-600 mt-1">
+            ⚠️ Suma din Cash va fi actualizată:{' '}
+            <span className="font-semibold">
+              {sub.price_lei ?? '—'} → {priceLei} RON
+            </span>
+          </p>
         )}
       </div>
 
-      {/* Edit last subscription dialog */}
-      <Dialog
-        open={editSubOpen}
-        onOpenChange={(open) => {
-          setEditSubOpen(open);
-          if (!open) {
-            setEditSub(null);
-            setEditStartISO("");
-            setEditEndISO("");
-            setEditPriceLei("");
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editează ultimul abonament</DialogTitle>
-          </DialogHeader>
+      <div className="flex gap-2 pt-1">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={handleSave}
+          className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold py-2 hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          <Check className="h-4 w-4" />
+          {saving ? 'Se salvează...' : 'Salvează'}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={cancelEdit}
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white text-gray-600 text-sm font-semibold px-4 py-2 hover:bg-gray-50 transition-colors"
+        >
+          <X className="h-4 w-4" />
+          Anulează
+        </button>
+      </div>
+    </div>
+  );
+}
 
-          <div className="space-y-3">
-            <div className="text-sm text-muted-foreground">
-              Editează manual perioada (start / final) + suma. Atenție: modifici doar rândul selectat.
+// ─── SubSection ──────────────────────────────────────────────────────────────
+// Ultimul abonament mereu vizibil; restul ascunse în dropdown
+
+interface SubSectionProps {
+  label: string;
+  subs: any[];          // deja sortate descrescător după expires_at
+  onSaved: () => void;
+}
+
+function SubSection({ label, subs, onSaved }: SubSectionProps) {
+  const [showRest, setShowRest] = useState(false);
+  if (subs.length === 0) return null;
+
+  const latest = subs[0];
+  const rest   = subs.slice(1);
+
+  return (
+    <div className="divide-y divide-gray-50">
+      {/* Header tip */}
+      <div className="px-4 py-2 bg-gray-50">
+        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">{label}</span>
+      </div>
+
+      {/* Ultimul abonament — mereu vizibil */}
+      <SubEditRow key={latest.id} sub={latest} onSaved={onSaved} />
+
+      {/* Restul — în dropdown */}
+      {rest.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowRest((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 text-xs text-gray-400 hover:bg-gray-50 transition-colors"
+          >
+            <span>
+              {showRest
+                ? 'Ascunde istoricul'
+                : `▾ Vezi ${rest.length} abonament${rest.length > 1 ? 'e' : ''} mai vechi`}
+            </span>
+            {showRest ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+
+          {showRest &&
+            rest.map((sub: any) => (
+              <SubEditRow key={sub.id} sub={sub} onSaved={onSaved} />
+            ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── AthleteForm ─────────────────────────────────────────────────────────────
+
+interface AthleteFormProps {
+  athlete?: any | null;
+  coach: CoachName;
+  onClose: () => void;
+}
+
+export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProps) {
+  const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isEdit = !!athlete?.id;
+
+  const [form, setForm] = useState({
+    full_name:            athlete?.full_name    ?? '',
+    structure:            athlete?.structure    ?? '',
+    default_race:         athlete?.default_race ?? 'NONE',
+    payment_mode:         athlete?.payment_mode ?? 'PER_SESSION',
+    phone:                athlete?.phone        ?? '',
+    email:                athlete?.email        ?? '',
+    birth_date:           athlete?.birth_date   ?? '',
+    notes:                athlete?.notes        ?? '',
+    photo_url:            athlete?.photo_url    ?? '',
+    coaching_start_date:  '',
+    coaching_expires_at:  '',
+    facility_start_date:  '',
+    facility_expires_at:  '',
+  });
+
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  function setField(key: keyof typeof form, val: string) {
+    setForm((prev) => ({ ...prev, [key]: val }));
+  }
+
+  // ── Fetch subscriptions fresh ────────────────────────────────────────────
+  const { data: subscriptions = [], refetch: refetchSubs } = useQuery({
+    queryKey: ['athlete-subs', athlete?.id],
+    enabled: isEdit && !!athlete?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('athlete_id', athlete.id)
+        .order('expires_at', { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Sortate deja descrescător
+  const coachingSubs = (subscriptions as any[]).filter((s) => kindSafe(s.kind) === 'COACHING');
+  const gymSubs      = (subscriptions as any[]).filter((s) => kindSafe(s.kind) === 'GYM');
+  const latestCoaching = coachingSubs[0];
+  const latestGym      = gymSubs[0];
+
+  // Callback după orice editare abonament
+  function handleSubSaved() {
+    qc.invalidateQueries({ queryKey: ['athletes'] });
+    qc.invalidateQueries({ queryKey: ['athlete-subs', athlete?.id] });
+    qc.invalidateQueries({ queryKey: ['cash-today'] });
+    qc.invalidateQueries({ queryKey: ['cash-ledger'] });
+    refetchSubs();
+  }
+
+  // ── Photo upload ─────────────────────────────────────────────────────────
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const tmpId = athlete?.id ?? `new-${Date.now()}`;
+      const path = `${tmpId}/${Date.now()}.jpg`;
+      const { data: uploaded, error: upErr } = await supabase.storage
+        .from('athlete-photos')
+        .upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: { publicUrl } } = supabase.storage
+        .from('athlete-photos')
+        .getPublicUrl(uploaded.path);
+      setField('photo_url', publicUrl);
+    } catch (err: any) {
+      toast.error('Upload foto eșuat: ' + (err?.message ?? ''));
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  // ── Save athlete ─────────────────────────────────────────────────────────
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!form.full_name.trim()) throw new Error('Numele este obligatoriu');
+
+      const payload: any = {
+        full_name:    form.full_name.trim(),
+        structure:    form.structure    || null,
+        default_race: form.default_race || 'NONE',
+        payment_mode: form.payment_mode || 'PER_SESSION',
+        phone:        form.phone.trim() || null,
+        email:        form.email.trim() || null,
+        birth_date:   form.birth_date   || null,
+        notes:        form.notes.trim() || null,
+        photo_url:    form.photo_url    || null,
+      };
+
+      if (isEdit) {
+        const { error } = await supabase.from('athletes').update(payload).eq('id', athlete.id);
+        if (error) throw error;
+      } else {
+        const { data: newAthlete, error } = await supabase
+          .from('athletes')
+          .insert({ ...payload, created_by_coach: coach, archived: false })
+          .select()
+          .single();
+        if (error) throw error;
+
+        const subsToInsert: any[] = [];
+        if (form.coaching_start_date && form.coaching_expires_at) {
+          subsToInsert.push({
+            athlete_id: newAthlete.id, kind: 'COACHING',
+            starts_at: form.coaching_start_date, expires_at: form.coaching_expires_at,
+            created_by_coach: coach,
+          });
+        }
+        if (form.facility_start_date && form.facility_expires_at) {
+          subsToInsert.push({
+            athlete_id: newAthlete.id, kind: 'GYM',
+            starts_at: form.facility_start_date, expires_at: form.facility_expires_at,
+            created_by_coach: coach,
+          });
+        }
+        if (subsToInsert.length) {
+          await supabase.from('subscriptions').insert(subsToInsert as any);
+        }
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['athletes'] });
+      toast.success(isEdit ? 'Sportiv actualizat!' : 'Sportiv adăugat!');
+      onClose();
+    },
+    onError: (e: any) => toast.error(e?.message ?? 'Eroare salvare'),
+  });
+
+  // ── Archive ──────────────────────────────────────────────────────────────
+  const archive = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('athletes').update({ archived: true }).eq('id', athlete.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['athletes'] });
+      toast.success('Sportiv arhivat');
+      onClose();
+    },
+    onError: (e: any) => toast.error(e?.message ?? 'Eroare arhivare'),
+  });
+
+  // ── Add subscription ─────────────────────────────────────────────────────
+  const addSubscription = useMutation({
+    mutationFn: async ({ kind, priceLei }: { kind: 'COACHING' | 'GYM'; priceLei: number }) => {
+      if (!athlete?.id) throw new Error('ID sportiv lipsă');
+
+      const existingSubs = (subscriptions as any[]).filter((s) => kindSafe(s.kind) === kind);
+      const latestSub = existingSubs[0]; // deja sortat descrescător
+
+      let startsAt = todayISO();
+      if (latestSub?.expires_at && latestSub.expires_at >= todayISO()) {
+        startsAt = addDaysISO(latestSub.expires_at, 1);
+      }
+      const expiresAt = addDaysISO(addMonthsISO(startsAt, 1), -1);
+
+      const { error } = await supabase.from('subscriptions').insert({
+        athlete_id: athlete.id, kind,
+        starts_at: startsAt, expires_at: expiresAt,
+        price_lei: priceLei, created_by_coach: coach,
+      } as any);
+      if (error) throw error;
+      return { startsAt, expiresAt };
+    },
+    onSuccess: (result, vars) => {
+      qc.invalidateQueries({ queryKey: ['athletes'] });
+      qc.invalidateQueries({ queryKey: ['athlete-subs', athlete?.id] });
+      refetchSubs();
+      const kindLabel = vars.kind === 'COACHING' ? 'Coaching' : 'Sală/Teren';
+      toast.success(`${kindLabel} adăugat: ${formatRo(result.startsAt)} → ${formatRo(result.expiresAt)}`);
+    },
+    onError: (e: any) => toast.error(e?.message ?? 'Eroare adăugare abonament'),
+  });
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="pb-28 bg-gray-50 min-h-screen">
+      <PageHeader
+        title={isEdit ? 'Editează sportiv' : 'Sportiv nou'}
+        backButton={
+          <button onClick={onClose} className="p-1 -ml-1 text-gray-400 hover:text-gray-600">
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+        }
+        action={
+          isEdit ? (
+            <Button
+              size="sm" variant="ghost" className="text-rose-500"
+              onClick={() => { if (confirm('Arhivezi acest sportiv?')) archive.mutate(); }}
+            >
+              Arhivează
+            </Button>
+          ) : undefined
+        }
+      />
+
+      <div className="px-4 mt-4 space-y-4">
+
+        {/* ── Foto ────────────────────────────────────────────────────── */}
+        <div className="flex justify-center">
+          <div className="relative">
+            <AthleteAvatar photoUrl={form.photo_url} name={form.full_name || 'Nou'} size={80} />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-sm hover:bg-indigo-700"
+              disabled={uploadingPhoto}
+            >
+              {uploadingPhoto ? <span className="text-xs">…</span> : <Camera className="h-3.5 w-3.5" />}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+          </div>
+        </div>
+
+        {/* ── Date personale ──────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
+          <h3 className="text-sm font-bold text-gray-700">Date personale</h3>
+
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Nume complet *</label>
+            <Input value={form.full_name} onChange={(e) => setField('full_name', e.target.value)} placeholder="ex: Popescu Ion" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Structură</label>
+              <select
+                value={form.structure}
+                onChange={(e) => setField('structure', e.target.value)}
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400"
+              >
+                <option value="">—</option>
+                <option value="MAPN">MAPN</option>
+                <option value="MAI">MAI</option>
+                <option value="ISU">ISU</option>
+              </select>
             </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <Label>Start (YYYY-MM-DD)</Label>
-                <Input value={editStartISO} onChange={(e) => setEditStartISO(e.target.value)} placeholder="2026-02-01" />
-              </div>
-              <div className="space-y-1">
-                <Label>Final (YYYY-MM-DD)</Label>
-                <Input value={editEndISO} onChange={(e) => setEditEndISO(e.target.value)} placeholder="2026-03-02" />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <Label>Suma (RON)</Label>
-              <Input
-                inputMode="numeric"
-                value={editPriceLei}
-                onChange={(e) => setEditPriceLei(e.target.value.replace(/[^\d]/g, ""))}
-                placeholder="800"
-              />
-              <div className="text-[11px] text-muted-foreground">
-                Când salvezi, încercăm să actualizăm și ultima înregistrare din Cash (pentru acest sportiv + tip).
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setEditSubOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => saveSubEditMutation.mutate()} disabled={saveSubEditMutation.isPending}>
-                {saveSubEditMutation.isPending ? "Salvez…" : "Save"}
-              </Button>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Probă default</label>
+              <select
+                value={form.default_race}
+                onChange={(e) => setField('default_race', e.target.value)}
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400"
+              >
+                <option value="NONE">NONE</option>
+                <option value="1000m">1000m</option>
+                <option value="2000m">2000m</option>
+              </select>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Mod plată</label>
+            <div className="flex gap-2">
+              {[{ v: 'PER_SESSION', l: 'La ședință' }, { v: 'SUBSCRIPTION', l: 'Abonament' }].map((opt) => (
+                <button
+                  key={opt.v} type="button"
+                  onClick={() => setField('payment_mode', opt.v)}
+                  className={`flex-1 rounded-xl py-2 text-sm font-semibold transition-colors ${
+                    form.payment_mode === opt.v ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {opt.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Telefon</label>
+            <Input type="tel" value={form.phone} onChange={(e) => setField('phone', e.target.value)} placeholder="07XX XXX XXX" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Email</label>
+            <Input type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} placeholder="ex: ion@email.ro" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500 mb-1 block">Data nașterii</label>
+            <Input type="date" value={form.birth_date} onChange={(e) => setField('birth_date', e.target.value)} />
+          </div>
+        </div>
+
+        {/* ── Abonamente inițiale (doar la creare) ────────────────────── */}
+        {!isEdit && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
+            <h3 className="text-sm font-bold text-gray-700">Abonamente inițiale (opțional)</h3>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Coaching — perioadă</label>
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="date" value={form.coaching_start_date} onChange={(e) => setField('coaching_start_date', e.target.value)} />
+                <Input type="date" value={form.coaching_expires_at} onChange={(e) => setField('coaching_expires_at', e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">Sală / Teren — perioadă</label>
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="date" value={form.facility_start_date} onChange={(e) => setField('facility_start_date', e.target.value)} />
+                <Input type="date" value={form.facility_expires_at} onChange={(e) => setField('facility_expires_at', e.target.value)} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Adaugă abonament (edit mode) ────────────────────────────── */}
+        {isEdit && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-bold text-gray-700 mb-3">Adaugă abonament</h3>
+
+            {/* Status curent */}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {([
+                { kind: 'COACHING' as const, label: 'Coaching curent', sub: latestCoaching },
+                { kind: 'GYM'      as const, label: 'Sală curent',     sub: latestGym      },
+              ] as const).map(({ kind, label, sub }) => (
+                <div key={kind} className="rounded-xl bg-gray-50 border border-gray-100 p-2.5 text-xs">
+                  <div className="text-gray-400 font-medium mb-0.5">{label}</div>
+                  {sub ? (
+                    <div className={`font-semibold ${
+                      getSubStatus(sub.expires_at) === 'active'   ? 'text-emerald-600' :
+                      getSubStatus(sub.expires_at) === 'expiring' ? 'text-amber-600'   : 'text-rose-600'
+                    }`}>
+                      până {formatRo(sub.expires_at)}
+                    </div>
+                  ) : (
+                    <div className="text-gray-400">Niciun abonament</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Butoane adăugare */}
+            <div className="space-y-2">
+              <button
+                type="button" disabled={addSubscription.isPending}
+                onClick={() => addSubscription.mutate({ kind: 'COACHING', priceLei: 800 })}
+                className="w-full flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Plus className="h-4 w-4 flex-shrink-0" />
+                  <span>Coaching</span>
+                  {latestCoaching?.expires_at && latestCoaching.expires_at >= todayISO() && (
+                    <span className="text-xs text-indigo-400 font-normal">
+                      (va începe {formatRo(addDaysISO(latestCoaching.expires_at, 1))})
+                    </span>
+                  )}
+                </div>
+                <span className="font-bold tabular-nums ml-2">800 RON</span>
+              </button>
+
+              <button
+                type="button" disabled={addSubscription.isPending}
+                onClick={() => addSubscription.mutate({ kind: 'GYM', priceLei: 120 })}
+                className="w-full flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Plus className="h-4 w-4 flex-shrink-0" />
+                  <span>Sală / Teren</span>
+                  {latestGym?.expires_at && latestGym.expires_at >= todayISO() && (
+                    <span className="text-xs text-emerald-400 font-normal">
+                      (va începe {formatRo(addDaysISO(latestGym.expires_at, 1))})
+                    </span>
+                  )}
+                </div>
+                <span className="font-bold tabular-nums ml-2">120 RON</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Istoricul abonamentelor (edit mode) ─────────────────────── */}
+        {/* Ultimul coaching + ultimul sală mereu vizibil; restul în dropdown */}
+        {isEdit && (coachingSubs.length > 0 || gymSubs.length > 0) && (
+          <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-bold text-gray-700">
+                📋 Abonamente ({subscriptions.length})
+              </h3>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Apasă <Pencil className="inline h-3 w-3" /> pentru a edita date sau sumă
+              </p>
+            </div>
+
+            <SubSection label="Coaching"       subs={coachingSubs} onSaved={handleSubSaved} />
+            <SubSection label="Sală / Teren"   subs={gymSubs}      onSaved={handleSubSaved} />
+          </div>
+        )}
+
+        {/* ── Note ────────────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <label className="text-xs font-medium text-gray-500 mb-1 block">Note</label>
+          <textarea
+            value={form.notes}
+            onChange={(e) => setField('notes', e.target.value)}
+            placeholder="Observații, restricții medicale, etc."
+            rows={3}
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-indigo-400 resize-none"
+          />
+        </div>
+
+        {/* ── Buton Salvează inline (în scroll, mereu vizibil) ────────── */}
+        <Button
+          className="w-full h-12 text-base font-bold shadow-md"
+          disabled={save.isPending}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? 'Se salvează...' : isEdit ? '✓  Salvează modificările' : 'Adaugă sportiv'}
+        </Button>
+
+      </div>
     </div>
   );
 }

@@ -106,7 +106,7 @@ function useShowIndexOnFastScroll(options?: { velocityThreshold?: number; hideDe
 
 const LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '#'] as const;
 
-export default function AthletesPage() {
+export default function AthletesPage({ onLogout }: { onLogout?: () => void }) {
   const { coach } = useCoach();
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -259,6 +259,11 @@ export default function AthletesPage() {
             <Button size="icon" onClick={() => setShowForm(true)}>
               <Plus className="h-4 w-4" />
             </Button>
+            {onLogout && (
+              <Button size="icon" variant="ghost" onClick={onLogout} title="Deconectare" className="text-muted-foreground">
+                <span className="text-sm">🚪</span>
+              </Button>
+            )}
           </div>
         }
       />

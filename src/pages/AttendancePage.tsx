@@ -168,6 +168,34 @@ export default function AttendancePage() {
     },
   });
 
+  // Check for existing timing session (duplicate session detection)
+  const { data: existingTimingSession } = useQuery({
+    queryKey: ['timing-session-check', today()],
+    queryFn: async () => {
+      const { data } = await supabase.from('timing_sessions').select('id, created_at').eq('date', today()).maybeSingle();
+      return data;
+    },
+    refetchInterval: 20000,
+  });
+
+  // Export attendance as CSV
+  function exportAttendanceCsv() {
+    const header = 'Nume,Prezent,Structura,Plata\n';
+    const rows = (athletes as any[]).map((a: any) => {
+      const isPresent = a.entry?.present ? 'Da' : 'Nu';
+      const isPaid = a.entry?.session_paid ? 'Platit' : '';
+      return `"${a.full_name ?? ''}",${isPresent},"${a.structure ?? ''}","${isPaid}"`;
+    }).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `prezenta-${today()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Export CSV descărcat!');
+  }
+
   // Get athletes with subs and entries
   const { data: athletes = [] } = useQuery({
     queryKey: ['attendance-athletes', attendanceDay?.id],
@@ -462,6 +490,21 @@ export default function AttendancePage() {
         </div>
       )}
 
+      {/* ── DUPLICATE SESSION BANNER ── */}
+      {existingTimingSession && (
+        <div className="mx-4 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800">Sesiune de cronometrare existentă azi</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                A fost creată o sesiune de cronometrare pentru astăzi. Dacă apeși „Start Crono", vei continua sesiunea existentă (nu se creează una nouă).
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="px-4 space-y-3">
         {LETTERS.map((letter) => {
           const list = grouped.get(letter) ?? [];
@@ -629,10 +672,15 @@ export default function AttendancePage() {
       )}
 
       <div className="fixed bottom-16 left-0 right-0 px-4 pb-2">
-        <Button className="w-full h-12 text-sm font-bold" onClick={() => setConfirmFinalize(true)} disabled={presentCount === 0}>
-          <Timer className="mr-2 h-4 w-4" />
-          Finalizează & Start Crono ({presentCount})
-        </Button>
+        <div className="flex gap-2">
+          <Button className="flex-1 h-12 text-sm font-bold" onClick={() => setConfirmFinalize(true)} disabled={presentCount === 0}>
+            <Timer className="mr-2 h-4 w-4" />
+            Finalizează & Start Crono ({presentCount})
+          </Button>
+          <Button variant="outline" className="h-12 px-3" onClick={exportAttendanceCsv} title="Export CSV">
+            📥
+          </Button>
+        </div>
       </div>
 
       {paymentOverlay && (
@@ -663,6 +711,13 @@ export default function AttendancePage() {
                     .update({ status: 'FINALIZED', finalized_by_coach: coach })
                     .eq('id', attendanceDay.id);
                   if (updErr) throw updErr;
+
+                  // Award attendance badges
+                  try {
+                    await supabase.rpc('award_attendance_badges' as any, { p_attendance_day_id: attendanceDay.id });
+                  } catch (badgeErr) {
+                    console.warn('award_attendance_badges failed (non-critical):', badgeErr);
+                  }
 
                   const { data: existingSession, error: sErr } = await supabase.from('timing_sessions').select('*').eq('date', today()).maybeSingle();
                   if (sErr) throw sErr;
