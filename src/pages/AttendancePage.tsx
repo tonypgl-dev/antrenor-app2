@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import PageHeader from '@/components/PageHeader';
@@ -113,11 +113,6 @@ function kindSafe(kind: any): 'COACHING' | 'GYM' | 'UNKNOWN' {
   return 'UNKNOWN';
 }
 
-function formatDateRo(dateISO: string) {
-  const [y, m, d] = dateISO.split('-').map(Number);
-  const months = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
-  return `${d} ${months[m - 1] ?? ''}`;
-}
 
 function formatDateRo(dateISO: string) {
   const [y, m, d] = dateISO.split('-').map(Number);
@@ -135,6 +130,7 @@ export default function AttendancePage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('attendance_dark_mode') === 'true');
   useEffect(() => { localStorage.setItem('attendance_dark_mode', String(darkMode)); }, [darkMode]);
+
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const v = localStorage.getItem('attendance_sort_mode');
     return (v === 'FIRST' || v === 'SECOND') ? (v as SortMode) : 'FIRST';
@@ -151,6 +147,22 @@ export default function AttendancePage() {
   useEffect(() => {
     localStorage.setItem('attendance_structure_filter', structureFilter);
   }, [structureFilter]);
+
+  // Load all preferences from Supabase when coach is known
+  useEffect(() => {
+    if (!coach) return;
+    supabase
+      .from('coach_preferences' as any)
+      .select('sort_mode, structure_filter, show_badges')
+      .eq('coach_id', coach)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        if (data.sort_mode === 'FIRST' || data.sort_mode === 'SECOND') setSortMode(data.sort_mode as any);
+        if (data.structure_filter === 'ALL' || data.structure_filter === 'MAI' || data.structure_filter === 'MAPN') setStructureFilter(data.structure_filter as any);
+        if (typeof data.show_badges === 'boolean') setShowBadges(data.show_badges);
+      });
+  }, [coach]);
 
   const getSortKey = (athlete: any) => {
     const name = String(athlete?.full_name ?? '').trim();
@@ -169,6 +181,21 @@ export default function AttendancePage() {
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [renewSheet, setRenewSheet] = useState<{ athleteId: string; athleteName: string } | null>(null);
   const [showNeedsAttention, setShowNeedsAttention] = useState(true);
+  const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(false);
+  const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showBadges, setShowBadges] = useState(() => localStorage.getItem('attendance_show_badges') !== 'false');
+  useEffect(() => {
+    localStorage.setItem('attendance_show_badges', String(showBadges));
+    if (!coach) return;
+    supabase
+      .from('coach_preferences' as any)
+      .upsert({ coach_id: coach, show_badges: showBadges }, { onConflict: 'coach_id' })
+      .then(({ error }) => { if (error) console.warn('badges pref save:', error.message); });
+  }, [showBadges, coach]);
+  const [showBottomBtn, setShowBottomBtn] = useState(true);
+  const lastScrollY = useRef(0);
+  const scrollTimerRef = useRef<number | null>(null);
 
   // Ensure attendance day exists
   const { data: attendanceDay } = useQuery({
@@ -217,7 +244,7 @@ export default function AttendancePage() {
     queryFn: async () => {
       const { data: allAthletes, error: aErr } = await supabase
         .from('athletes')
-        .select('*, subscriptions(*)')
+        .select('*, subscriptions(*), athlete_badges(badge_definition_id, badge_definitions(icon, name, category))')
         .eq('archived', false)
         .order('full_name');
       if (aErr) throw aErr;
@@ -230,6 +257,7 @@ export default function AttendancePage() {
       return (allAthletes || []).map((a: any) => ({
         ...a,
         entry: entryMap.get(a.id),
+        badges: (a.athlete_badges ?? []).map((b: any) => b.badge_definitions).filter(Boolean),
       }));
     },
   });
@@ -278,12 +306,33 @@ export default function AttendancePage() {
     return getSortKey(a).localeCompare(getSortKey(b), 'ro', { sensitivity: 'base' });
   });
 
-  const needsAttention = filteredAthletes.filter((a: any) => {
-    if (a.payment_mode === 'PER_SESSION') return false;
-    const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
-    const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
-    return c === 'expired' || c === 'expiring' || g === 'expired' || g === 'expiring';
-  });
+  const needsAttention = useMemo(() => {
+    const list = filteredAthletes.filter((a: any) => {
+      const c = a.payment_mode !== 'PER_SESSION' ? getSubStatus(getLatestSub(a, 'COACHING')?.expires_at) : 'none';
+      const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+      const cExp = getLatestSub(a, 'COACHING')?.expires_at;
+      const gExp = getLatestSub(a, 'GYM')?.expires_at;
+      const cToday = cExp ? String(cExp).slice(0,10) === today() : false;
+      const gToday = gExp ? String(gExp).slice(0,10) === today() : false;
+      // Include: expired or expires today
+      // Also include expiring-soon ONLY if the other sub is expired
+      const cSoon = c === 'expiring' && !cToday && g === 'expired';
+      const gSoon = g === 'expiring' && !gToday && c === 'expired';
+      return c === 'expired' || g === 'expired' || cToday || gToday || cSoon || gSoon;
+    });
+    // Sort: both expired > coaching expired > gym expired > expiring today > expiring soon
+    return list.sort((a: any, b: any) => {
+      const score = (x: any) => {
+        const c = x.payment_mode !== 'PER_SESSION' ? getSubStatus(getLatestSub(x, 'COACHING')?.expires_at) : 'none';
+        const g = getSubStatus(getLatestSub(x, 'GYM')?.expires_at);
+        if (c === 'expired' && g === 'expired') return 0;
+        if (c === 'expired') return 1;
+        if (g === 'expired') return 2;
+        return 3;
+      };
+      return score(a) - score(b);
+    });
+  }, [filteredAthletes]);
 
   const togglePresent = useMutation({
     mutationFn: async (athlete: any) => {
@@ -441,11 +490,27 @@ export default function AttendancePage() {
 
   const presentCount = filteredAthletes.filter((a: any) => a.entry?.present).length;
 
+  // Race counts: timed (1000/2000) vs don't time (NONE)
+  const presentAthletes = filteredAthletes.filter((a: any) => a.entry?.present);
+  const count1000 = presentAthletes.filter((a: any) => String(a.default_race ?? '').includes('1000')).length;
+  const count2000 = presentAthletes.filter((a: any) => String(a.default_race ?? '').includes('2000')).length;
+  const countNone = presentAthletes.filter((a: any) => !String(a.default_race ?? '').includes('1000') && !String(a.default_race ?? '').includes('2000')).length;
+
+  // Filter by search
+  const searchFiltered = useMemo(() => {
+    if (!searchQuery.trim()) return sorted;
+    const q = searchQuery.trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}+/gu, '');
+    return sorted.filter((a: any) => {
+      const name = String(a.full_name ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}+/gu, '');
+      return name.includes(q);
+    });
+  }, [sorted, searchQuery]);
+
   // Grouped A-Z list (stable: hooks above render)
   const grouped = useMemo(() => {
     const map = new Map<string, any[]>();
     for (const l of LETTERS) map.set(l, []);
-    for (const a of sorted as any[]) {
+    for (const a of searchFiltered as any[]) {
             const letter = normalizeLetter(getSortKey(a));
       map.get(letter)!.push(a);
     }
@@ -471,6 +536,19 @@ export default function AttendancePage() {
     return () => window.removeEventListener('scroll', onScroll);
   }, [activeLetter]);
 
+  // Auto-hide bottom button on scroll
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y < 10) { setShowBottomBtn(true); return; }
+      if (y > lastScrollY.current + 8) setShowBottomBtn(false);
+      else if (y < lastScrollY.current - 8) setShowBottomBtn(true);
+      lastScrollY.current = y;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   const scrollToLetter = (l: (typeof LETTERS)[number]) => {
     const el = sectionRefs.current[l];
     if (!el) return;
@@ -495,7 +573,13 @@ export default function AttendancePage() {
                 Prezență {formatDateRo(today())}
               </div>
               <div className="text-sm text-muted-foreground font-medium">
-                {coach ?? ''} · {presentCount} prezenți
+                {coach ?? ''}
+                {presentCount > 0 && <>
+                  {count1000 > 0 && <> · {count1000}×1000m</>}
+                  {count2000 > 0 && <> · {count2000}×2000m</>}
+                  {countNone > 0 && <> · {countNone} don't time</>}
+                </>}
+                {presentCount === 0 && <> · 0 prezenți</>}
               </div>
             </div>
           </div>
@@ -511,37 +595,86 @@ export default function AttendancePage() {
           <Settings className="h-5 w-5" />
         </Button>
       </div>
+      {/* Search bar */}
+      <div className="px-4 pb-2">
+        <div className="relative">
+          <input
+            type="search"
+            placeholder="Caută sportiv..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-border bg-muted/40 px-4 py-2 text-sm pl-8 outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <span className="absolute left-2.5 top-2.5 text-muted-foreground text-xs">🔍</span>
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-2 text-muted-foreground text-lg leading-none">×</button>
+          )}
+        </div>
+      </div>
 
-      {needsAttention.length > 0 && (
-        <div className="mx-4 mb-3 rounded-lg border border-warning/30 bg-warning/5 overflow-hidden">
-          <button onClick={() => setShowNeedsAttention(v => !v)}
-            className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-warning">
-            <span className="flex items-center gap-2">
+      {needsAttention.length > 0 && !needsAttentionDismissed && (
+        <div className={["mx-0 mb-2 border-b border-warning/30 bg-warning/5 overflow-hidden transition-all", showNeedsAttention ? "sticky top-0 z-10 backdrop-blur" : ""].join(" ")}>
+          <div className="flex items-center gap-1 px-3 py-2 flex-wrap">
+            <button onClick={() => setShowNeedsAttention(v => !v)}
+              className="flex items-center gap-2 text-sm font-semibold text-warning min-w-0 flex-1">
               <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-              Necesită atenție ({needsAttention.filter((a: any) => {
-                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
-                const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
-                return c === 'expired' || g === 'expired';
-              }).length} expirați)
-            </span>
-            <span className="text-xs opacity-70">{showNeedsAttention ? '▲' : '▼'}</span>
-          </button>
+              <span className="truncate">Necesită atenție</span>
+              <span className="text-xs opacity-70 flex-shrink-0">{showNeedsAttention ? '▲' : '▼'}</span>
+            </button>
+            <div className="flex items-center gap-2 text-xs font-semibold flex-shrink-0">
+              {(() => {
+                const expC = needsAttention.filter((a: any) => getSubStatus(getLatestSub(a, 'COACHING')?.expires_at) === 'expired').length;
+                const expG = needsAttention.filter((a: any) => getSubStatus(getLatestSub(a, 'GYM')?.expires_at) === 'expired').length;
+                return <>
+                  {expC > 0 && <span className="text-rose-600">AB:{expC}</span>}
+                  {expG > 0 && <span className="text-orange-500">Sală:{expG}</span>}
+                </>;
+              })()}
+            </div>
+            <button onClick={() => setNeedsAttentionDismissed(true)}
+              className="ml-1 flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-warning/60 hover:text-warning hover:bg-warning/10 text-base leading-none">
+              ×
+            </button>
+          </div>
           {showNeedsAttention && (
-            <div className="px-3 pb-3 space-y-1.5 border-t border-warning/20 pt-2">
+            <div className="px-3 pb-3 space-y-1.5 border-t border-warning/20 pt-2 max-h-48 overflow-y-auto">
               {needsAttention.filter((a: any) => {
-                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                if (dismissedAttentionIds.has(a.id)) return false;
+                const c = a.payment_mode !== 'PER_SESSION' ? getSubStatus(getLatestSub(a, 'COACHING')?.expires_at) : 'none';
                 const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
-                return c === 'expired' || g === 'expired';
+                const cExp = getLatestSub(a, 'COACHING')?.expires_at;
+                const gExp = getLatestSub(a, 'GYM')?.expires_at;
+                const cToday = cExp ? String(cExp).slice(0,10) === today() : false;
+                const gToday = gExp ? String(gExp).slice(0,10) === today() : false;
+                return c === 'expired' || g === 'expired' || cToday || gToday;
               }).map((a: any) => {
-                const c = getSubStatus(getLatestSub(a, 'COACHING')?.expires_at);
+                const c = a.payment_mode !== 'PER_SESSION' ? getSubStatus(getLatestSub(a, 'COACHING')?.expires_at) : 'none';
                 const g = getSubStatus(getLatestSub(a, 'GYM')?.expires_at);
+                const cExp = getLatestSub(a, 'COACHING')?.expires_at;
+                const gExp = getLatestSub(a, 'GYM')?.expires_at;
+                const cToday = cExp ? String(cExp).slice(0,10) === today() : false;
+                const gToday = gExp ? String(gExp).slice(0,10) === today() : false;
+                const icon = (c === 'expired' || g === 'expired') ? '🔴' : '🟠';
+                const name = String(a.full_name ?? '');
+                // Build grammatically correct Romanian sentence
                 const parts: string[] = [];
-                if (c === 'expired') parts.push('antrenament expirat');
-                if (g === 'expired') parts.push('sala expirată');
+                if (c === 'expired') parts.push('i-a expirat abonamentul');
+                if (g === 'expired') parts.push('i-a expirat sala');
+                if (cToday && c !== 'expired') parts.push('abonamentul îi expiră azi');
+                if (gToday && g !== 'expired') parts.push('sala îi expiră azi');
+                if (c === 'expiring' && !cToday && g === 'expired') parts.push('abonamentul îi expiră în curând');
+                if (g === 'expiring' && !gToday && c === 'expired') parts.push('sala îi expiră în curând');
+                const sentence = parts.length === 1
+                  ? `Lui ${name} ${parts[0]}.`
+                  : `Lui ${name} ${parts.slice(0,-1).join(', ')} și ${parts[parts.length-1]}.`;
                 return (
-                  <div key={a.id} className="text-sm flex items-start gap-1.5">
-                    <span className="flex-shrink-0">{c === 'expired' ? '🔴' : '🟠'}</span>
-                    <span className="text-warning/90"><span className="font-bold">{String(a.full_name ?? '')}</span> are {parts.join(' și ')}.</span>
+                  <div key={a.id} className="text-base flex items-center gap-2 py-0.5">
+                    <span className="flex-shrink-0">{icon}</span>
+                    <span className="text-amber-900 dark:text-amber-100 font-medium flex-1">{sentence}</span>
+                    <button
+                      onClick={() => setDismissedAttentionIds(prev => new Set([...prev, a.id]))}
+                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-warning/40 hover:text-warning hover:bg-warning/10 text-sm leading-none"
+                    >×</button>
                   </div>
                 );
               })}
@@ -623,11 +756,14 @@ export default function AttendancePage() {
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
                 </div>
-                {/* DEBUG */}
-                <div className="text-[10px] text-blue-400 mt-0.5 break-all">
-                  {(athlete.subscriptions||[]).map((s:any)=>`${s.kind}|${s.expires_at}`).join(' · ')}
-                  {' '}[gSt:{gStatus} cSt:{cStatus}]
-                </div>
+                {showBadges && (athlete.badges ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1"
+                    onClick={e => { e.stopPropagation(); navigate(`/athletes/${athlete.id}`); }}>
+                    {(athlete.badges ?? []).slice(0, 6).map((b: any, i: number) => (
+                      <span key={i} className="text-base leading-none cursor-pointer" title={b.name}>{b.icon ?? '🏅'}</span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -748,15 +884,37 @@ export default function AttendancePage() {
         </div>
       )}
 
-      <div className="fixed bottom-16 left-0 right-0 px-4 pb-2">
+      <div className={[
+        "fixed bottom-16 left-0 right-0 px-3 pb-2 transition-all duration-300",
+        showBottomBtn ? "translate-y-0 opacity-100" : "translate-y-24 opacity-0 pointer-events-none"
+      ].join(" ")}>
         <div className="flex gap-2">
-          <Button className="flex-1 h-12 text-sm font-bold" onClick={() => setConfirmFinalize(true)} disabled={presentCount === 0}>
-            <Timer className="mr-2 h-4 w-4" />
-            Finalizează & Start Crono ({presentCount})
-          </Button>
-          <Button variant="outline" className="h-12 px-3" onClick={exportAttendanceCsv} title="Export CSV">
-            📥
-          </Button>
+          <button
+            onClick={() => { if (presentCount > 0) setConfirmFinalize(true); }}
+            disabled={presentCount === 0}
+            className={[
+              "flex-1 h-14 rounded-2xl flex items-center justify-center gap-2 text-white font-black text-base shadow-lg transition-all",
+              "bg-gradient-to-b from-teal-500 to-teal-700",
+              "shadow-teal-700/40",
+              "active:scale-[0.98]",
+              presentCount === 0 ? "opacity-50 cursor-not-allowed" : "hover:shadow-teal-600/60",
+              "border border-teal-400/30",
+            ].join(" ")}
+            style={{ boxShadow: '0 4px 24px 0 rgba(13,148,136,0.35), inset 0 1px 0 rgba(255,255,255,0.15)' }}
+          >
+            <Timer className="h-5 w-5 flex-shrink-0" />
+            <div className="text-center leading-tight">
+              <div className="text-base font-black">Finalizează &amp; Start Crono</div>
+              <div className="text-xs font-semibold opacity-80">
+                Prezență ({count1000 + count2000}+{countNone})
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={exportAttendanceCsv}
+            className="h-14 w-14 rounded-2xl flex items-center justify-center bg-muted border border-border text-xl shadow-sm active:scale-95"
+            title="Export CSV"
+          >📥</button>
         </div>
       </div>
 
@@ -943,6 +1101,24 @@ return;
                 </div>
               </button>
             </div>
+            <div>
+              <div className="text-sm font-semibold mb-2">Badge-uri în listă</div>
+              <button type="button" onClick={() => setShowBadges(v => !v)}
+                className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
+                  showBadges ? "border-emerald-500 bg-emerald-50" : "border-border bg-background"].join(" ")}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">🏅</span>
+                  <div className="text-left">
+                    <div className="text-sm font-bold">{showBadges ? "Badge-uri vizibile" : "Badge-uri ascunse"}</div>
+                    <div className="text-xs opacity-60">Afișează simbolurile în card</div>
+                  </div>
+                </div>
+                <div className={["w-12 h-6 rounded-full transition-colors relative flex-shrink-0", showBadges ? "bg-emerald-500" : "bg-gray-300"].join(" ")}>
+                  <div className={["absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform", showBadges ? "translate-x-7" : "translate-x-1"].join(" ")} />
+                </div>
+              </button>
+            </div>
+
             <div className="pt-2">
               <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
             </div>
