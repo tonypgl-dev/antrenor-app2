@@ -577,7 +577,7 @@ export default function AttendancePage() {
                 {presentCount > 0 && <>
                   {count1000 > 0 && <> · {count1000}×1000m</>}
                   {count2000 > 0 && <> · {count2000}×2000m</>}
-                  {countNone > 0 && <> · {countNone} don't time</>}
+                  {countNone > 0 && <> · {countNone} nedistribuiți</>}
                 </>}
                 {presentCount === 0 && <> · 0 prezenți</>}
               </div>
