@@ -6,7 +6,7 @@ import AthleteAvatar from '@/components/AthleteAvatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { ArrowLeft, Camera, Plus, ChevronDown, ChevronUp, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, Camera, Plus, ChevronDown, ChevronUp, Pencil, Check, Settings, X } from 'lucide-react';
 import type { CoachName } from '@/lib/coach';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -64,9 +64,29 @@ function kindSafe(kind: any): 'COACHING' | 'GYM' | 'UNKNOWN' {
 interface SubEditRowProps {
   sub: any;
   onSaved: () => void;
+  deleteMode?: boolean;
+  onDeleted?: () => void;
 }
 
-function SubEditRow({ sub, onSaved }: SubEditRowProps) {
+function SubEditRow({ sub, onSaved, deleteMode, onDeleted }: SubEditRowProps) {
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    if (!window.confirm(`Ștergi abonamentul ${sub.starts_at} → ${sub.expires_at} (${sub.price_lei ?? '?'} RON)? Se va șterge și din Încasări.`)) return;
+    setDeleting(true);
+    try {
+      await supabase.from('cash_ledger').delete().eq('subscription_id', sub.id);
+      const { error } = await supabase.from('subscriptions').delete().eq('id', sub.id);
+      if (error) throw error;
+      toast.success('Abonament șters');
+      onDeleted?.();
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Eroare ștergere');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const [editing, setEditing] = useState(false);
   const [startsAt, setStartsAt] = useState<string>(sub.starts_at ?? '');
   const [expiresAt, setExpiresAt] = useState<string>(sub.expires_at ?? '');
@@ -164,14 +184,26 @@ function SubEditRow({ sub, onSaved }: SubEditRowProps) {
           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cfg.cls}`}>
             {cfg.label}
           </span>
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="h-7 w-7 flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-            title="Editează"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
+          {deleteMode ? (
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="h-7 w-7 flex items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-500 hover:bg-rose-100 transition-colors"
+              title="Șterge abonament"
+            >
+              {deleting ? <span className="text-xs">…</span> : <X className="h-3.5 w-3.5" />}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="h-7 w-7 flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-400 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+              title="Editează"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
     );
@@ -253,11 +285,12 @@ function SubEditRow({ sub, onSaved }: SubEditRowProps) {
 
 interface SubSectionProps {
   label: string;
-  subs: any[];          // deja sortate descrescător după expires_at
+  subs: any[];
   onSaved: () => void;
+  deleteMode?: boolean;
 }
 
-function SubSection({ label, subs, onSaved }: SubSectionProps) {
+function SubSection({ label, subs, onSaved, deleteMode }: SubSectionProps) {
   const [showRest, setShowRest] = useState(false);
   if (subs.length === 0) return null;
 
@@ -272,7 +305,7 @@ function SubSection({ label, subs, onSaved }: SubSectionProps) {
       </div>
 
       {/* Ultimul abonament — mereu vizibil */}
-      <SubEditRow key={latest.id} sub={latest} onSaved={onSaved} />
+      <SubEditRow key={latest.id} sub={latest} onSaved={onSaved} deleteMode={deleteMode} onDeleted={onSaved} />
 
       {/* Restul — în dropdown */}
       {rest.length > 0 && (
@@ -292,10 +325,53 @@ function SubSection({ label, subs, onSaved }: SubSectionProps) {
 
           {showRest &&
             rest.map((sub: any) => (
-              <SubEditRow key={sub.id} sub={sub} onSaved={onSaved} />
+              <SubEditRow key={sub.id} sub={sub} onSaved={onSaved} deleteMode={deleteMode} onDeleted={onSaved} />
             ))}
         </>
       )}
+    </div>
+  );
+}
+
+
+// ─── SubsCard ─────────────────────────────────────────────────────────────────
+function SubsCard({ subscriptions, coachingSubs, gymSubs, onSaved }: {
+  subscriptions: any[];
+  coachingSubs: any[];
+  gymSubs: any[];
+  onSaved: () => void;
+}) {
+  const [deleteMode, setDeleteMode] = useState(false);
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0">
+          <h3 className="text-sm font-bold text-gray-700">
+            📋 Abonamente ({subscriptions.length})
+          </h3>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {deleteMode
+              ? 'Apasă × pentru a șterge un abonament'
+              : <>Apasă <Pencil className="inline h-3 w-3" /> pentru a edita date sau sumă</>}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setDeleteMode(v => !v)}
+          className={[
+            "flex-shrink-0 h-8 w-8 flex items-center justify-center rounded-lg border transition-colors",
+            deleteMode
+              ? "border-rose-300 bg-rose-50 text-rose-600"
+              : "border-gray-200 bg-gray-50 text-gray-400 hover:border-indigo-300 hover:text-indigo-600"
+          ].join(" ")}
+          title={deleteMode ? "Ieși din mod ștergere" : "Șterge abonamente"}
+        >
+          {deleteMode ? <X className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+        </button>
+      </div>
+      <SubSection label="Coaching"     subs={coachingSubs} onSaved={onSaved} deleteMode={deleteMode} />
+      <SubSection label="Sală / Teren" subs={gymSubs}      onSaved={onSaved} deleteMode={deleteMode} />
     </div>
   );
 }
@@ -688,19 +764,12 @@ export default function AthleteForm({ athlete, coach, onClose }: AthleteFormProp
         {/* ── Istoricul abonamentelor (edit mode) ─────────────────────── */}
         {/* Ultimul coaching + ultimul sală mereu vizibil; restul în dropdown */}
         {isEdit && (coachingSubs.length > 0 || gymSubs.length > 0) && (
-          <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-gray-700">
-                📋 Abonamente ({subscriptions.length})
-              </h3>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Apasă <Pencil className="inline h-3 w-3" /> pentru a edita date sau sumă
-              </p>
-            </div>
-
-            <SubSection label="Coaching"       subs={coachingSubs} onSaved={handleSubSaved} />
-            <SubSection label="Sală / Teren"   subs={gymSubs}      onSaved={handleSubSaved} />
-          </div>
+          <SubsCard
+            subscriptions={subscriptions as any[]}
+            coachingSubs={coachingSubs}
+            gymSubs={gymSubs}
+            onSaved={handleSubSaved}
+          />
         )}
 
         {/* ── Note ────────────────────────────────────────────────────── */}

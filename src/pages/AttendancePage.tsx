@@ -657,16 +657,23 @@ export default function AttendancePage() {
                 const icon = (c === 'expired' || g === 'expired') ? '🔴' : '🟠';
                 const name = String(a.full_name ?? '');
                 // Build grammatically correct Romanian sentence
-                const parts: string[] = [];
-                if (c === 'expired') parts.push('i-a expirat abonamentul');
-                if (g === 'expired') parts.push('i-a expirat sala');
-                if (cToday && c !== 'expired') parts.push('abonamentul îi expiră azi');
-                if (gToday && g !== 'expired') parts.push('sala îi expiră azi');
-                if (c === 'expiring' && !cToday && g === 'expired') parts.push('abonamentul îi expiră în curând');
-                if (g === 'expiring' && !gToday && c === 'expired') parts.push('sala îi expiră în curând');
-                const sentence = parts.length === 1
-                  ? `Lui ${name} ${parts[0]}.`
-                  : `Lui ${name} ${parts.slice(0,-1).join(', ')} și ${parts[parts.length-1]}.`;
+                const expiredItems: string[] = [];
+                if (c === 'expired') expiredItems.push('abonamentul');
+                if (g === 'expired') expiredItems.push('sala');
+                const todayItems: string[] = [];
+                if (cToday && c !== 'expired') todayItems.push('abonamentul');
+                if (gToday && g !== 'expired') todayItems.push('sala');
+                const soonItems: string[] = [];
+                if (c === 'expiring' && !cToday && g === 'expired') soonItems.push('abonamentul');
+                if (g === 'expiring' && !gToday && c === 'expired') soonItems.push('sala');
+                const allParts: string[] = [];
+                if (expiredItems.length === 1) allParts.push(`i-a expirat ${expiredItems[0]}`);
+                if (expiredItems.length > 1) allParts.push(`i-au expirat ${expiredItems.join(' și ')}`);
+                if (todayItems.length) allParts.push(`${todayItems.join(' și ')} îi expiră azi`);
+                if (soonItems.length) allParts.push(`${soonItems.join(' și ')} îi expiră în curând`);
+                const sentence = allParts.length === 1
+                  ? `Lui ${name} ${allParts[0]}.`
+                  : `Lui ${name} ${allParts.slice(0,-1).join(', ')} și ${allParts[allParts.length-1]}.`;
                 return (
                   <div key={a.id} className="text-base flex items-center gap-2 py-0.5">
                     <span className="flex-shrink-0">{icon}</span>
