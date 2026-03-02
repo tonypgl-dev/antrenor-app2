@@ -669,8 +669,8 @@ export default function AttendancePage() {
                 const allParts: string[] = [];
                 if (expiredItems.length === 1) allParts.push(`i-a expirat ${expiredItems[0]}`);
                 if (expiredItems.length > 1) allParts.push(`i-au expirat ${expiredItems.join(' și ')}`);
-                if (todayItems.length) allParts.push(`${todayItems.join(' și ')} îi expiră azi`);
-                if (soonItems.length) allParts.push(`${soonItems.join(' și ')} îi expiră în curând`);
+                if (todayItems.length) allParts.push(`îi expiră ${todayItems.join(' și ')} azi`);
+                if (soonItems.length) allParts.push(`îi expiră ${soonItems.join(' și ')} în curând`);
                 const sentence = allParts.length === 1
                   ? `Lui ${name} ${allParts[0]}.`
                   : `Lui ${name} ${allParts.slice(0,-1).join(', ')} și ${allParts[allParts.length-1]}.`;
@@ -716,7 +716,7 @@ export default function AttendancePage() {
                 <div className="text-xl font-bold text-foreground/80">{letter}</div>
               </div>
 
-              <div className="space-y-1 mt-2">
+              <div className="space-y-0.5 mt-1">
                 {list.map((athlete: any) => {
           const isPresent = athlete.entry?.present;
           const isPaidSession = athlete.entry?.session_paid;
@@ -740,7 +740,7 @@ export default function AttendancePage() {
               key={athlete.id}
               onClick={() => togglePresent.mutate(athlete)}
               className={[
-                "flex items-center justify-between rounded-lg p-3 transition-all cursor-pointer active:scale-[0.99]",
+                "relative flex items-center justify-between rounded-md px-2 py-1.5 transition-all cursor-pointer active:scale-[0.99]",
                 isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
                 darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
                 darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
@@ -749,33 +749,32 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-xl opacity-90 truncate">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-sm opacity-70 truncate leading-none mb-0.5">{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-4xl tracking-wide truncate">{String(lastName ?? '').toUpperCase()}</span>
+                    <span className="text-[28px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
                     {gStatus === 'expired' && (
                       <span className="text-orange-400 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-muted-foreground">{isPerSession ? 'Ședință' : 'Abonament'}</span>
-                </div>
-                {showBadges && (athlete.badges ?? []).length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1"
-                    onClick={e => { e.stopPropagation(); navigate(`/athletes/${athlete.id}`); }}>
-                    {(athlete.badges ?? []).slice(0, 6).map((b: any, i: number) => (
-                      <span key={i} className="text-base leading-none cursor-pointer" title={b.name}>{b.icon ?? '🏅'}</span>
+                    {showBadges && (athlete.badges ?? []).slice(0, 5).map((b: any, i: number) => (
+                      <span key={i} className="text-sm leading-none cursor-pointer flex-shrink-0"
+                        title={b.name}
+                        onClick={e => { e.stopPropagation(); navigate(`/athletes/${athlete.id}`); }}
+                      >{b.icon ?? '🏅'}</span>
                     ))}
                   </div>
-                )}
+                </div>
+                <div className="absolute bottom-0.5 left-1.5">
+                  <span className="text-[9px] opacity-30 select-none" title={isPerSession ? 'Per ședință' : 'Abonament'}>{isPerSession ? '🎟' : '📋'}</span>
+                </div>
+
               </div>
 
               <div className="flex items-center gap-2">
                 <div
-                  className="text-right text-[13px] leading-snug tabular-nums font-semibold"
+                  className="text-right text-[11px] leading-tight tabular-nums font-semibold"
                   onClick={(e) => {
                     e.stopPropagation();
                     setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
@@ -790,7 +789,7 @@ export default function AttendancePage() {
                   <Button
                     size="sm"
                     variant="default"
-                    className="h-7 px-3 text-xs font-bold"
+                    className="h-6 px-2 text-xs font-bold"
                     onClick={(e) => {
                       e.stopPropagation();
                       paySession.mutate(athlete);
@@ -807,7 +806,7 @@ export default function AttendancePage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 px-3 text-xs font-bold"
+                        className="h-6 px-2 text-xs font-bold"
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -821,7 +820,7 @@ export default function AttendancePage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 px-3 text-xs font-bold"
+                        className="h-6 px-2 text-xs font-bold"
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
