@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useCoach } from '@/hooks/useCoach';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { Timer, AlertTriangle, Settings } from 'lucide-react';
+import { Timer, AlertTriangle, Settings, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { addDays, addMonths, format, parseISO, subDays } from 'date-fns';
 import {
   AlertDialog,
@@ -122,6 +122,67 @@ function formatDateRo(dateISO: string) {
   return `${days[dow]} ${d} ${months[m - 1] ?? ''}`;
 }
 
+
+function HistoryCalendar({ month, athleteId, athletes }: { month: string; athleteId: string; athletes: any[] }) {
+  const { data: entriesRaw } = useQuery({
+    queryKey: ['history-entries', month, athleteId],
+    queryFn: async () => {
+      let q = (supabase.from('attendance_entries' as any) as any)
+        .select('athlete_id, present, attendance_days!inner(date)')
+        .gte('attendance_days.date', month + '-01')
+        .lte('attendance_days.date', month + '-31');
+      if (athleteId) q = q.eq('athlete_id', athleteId);
+      const { data } = await q;
+      return data ?? [];
+    },
+    staleTime: 30000,
+  });
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const firstDow = new Date(y, m - 1, 1).getDay();
+  const totalPerDate: Record<string, number> = {};
+  (entriesRaw ?? []).forEach((e: any) => {
+    const date = e.attendance_days?.date;
+    if (!date || !e.present) return;
+    totalPerDate[date] = (totalPerDate[date] ?? 0) + 1;
+  });
+  const todayStr = new Date().toISOString().split('T')[0];
+  const weekDays = ['Du', 'Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sa'];
+  const trainingDays = Object.keys(totalPerDate).length;
+  const totalPresences = Object.values(totalPerDate).reduce((a, b) => a + b, 0);
+  return (
+    <div>
+      <div className="grid grid-cols-7 gap-1">
+        {weekDays.map(d => (
+          <div key={d} className="text-center text-[10px] font-bold text-muted-foreground py-1">{d}</div>
+        ))}
+        {Array.from({ length: (firstDow + 6) % 7 }).map((_, i) => <div key={'e'+i} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const day = i + 1;
+          const dateStr = month + '-' + String(day).padStart(2, '0');
+          const count = totalPerDate[dateStr] ?? 0;
+          const isToday = dateStr === todayStr;
+          const isPast = dateStr < todayStr;
+          return (
+            <div key={day} className={['flex flex-col items-center justify-center rounded-lg py-1.5 min-h-[40px] text-sm font-semibold',
+              isToday ? 'ring-2 ring-primary' : '',
+              count > 0 ? 'bg-emerald-500/20 text-emerald-700' : isPast ? 'text-muted-foreground/40' : 'text-foreground/60',
+            ].join(' ')}>
+              <span>{day}</span>
+              {count > 0 && <span className="text-[9px] font-black text-emerald-600 leading-none">{count}</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl bg-muted/50 py-2"><div className="text-xl font-black text-emerald-500">{trainingDays}</div><div className="text-[10px] text-muted-foreground">Zile antren.</div></div>
+        <div className="rounded-xl bg-muted/50 py-2"><div className="text-xl font-black text-blue-500">{totalPresences}</div><div className="text-[10px] text-muted-foreground">Total prezențe</div></div>
+        <div className="rounded-xl bg-muted/50 py-2"><div className="text-xl font-black">{athletes.length}</div><div className="text-[10px] text-muted-foreground">Sportivi</div></div>
+      </div>
+    </div>
+  );
+}
+
 export default function AttendancePage() {
   const { coach } = useCoach();
   const [coachPhotoUrl] = useState<string | null>(() => localStorage.getItem('coach_photo_url') ?? 'https://i.ibb.co/99vDChQW/daniela.png');
@@ -132,7 +193,6 @@ export default function AttendancePage() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('attendance_dark_mode') === 'true');
-  useEffect(() => { localStorage.setItem('attendance_dark_mode', String(darkMode)); }, [darkMode]);
 
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     const v = localStorage.getItem('attendance_sort_mode');
@@ -156,7 +216,7 @@ export default function AttendancePage() {
     if (!coach) return;
     supabase
       .from('coach_preferences' as any)
-      .select('sort_mode, structure_filter, show_badges')
+      .select('sort_mode, structure_filter, show_badges, dark_mode, text_size, hide_valid_subs')
       .eq('coach_id', coach)
       .maybeSingle()
       .then(({ data }) => {
@@ -164,6 +224,9 @@ export default function AttendancePage() {
         if (data.sort_mode === 'FIRST' || data.sort_mode === 'SECOND') setSortMode(data.sort_mode as any);
         if (data.structure_filter === 'ALL' || data.structure_filter === 'MAI' || data.structure_filter === 'MAPN') setStructureFilter(data.structure_filter as any);
         if (typeof data.show_badges === 'boolean') setShowBadges(data.show_badges);
+        if (typeof data.dark_mode === 'boolean') setDarkMode(data.dark_mode);
+        if (data.text_size === 'sm' || data.text_size === 'md' || data.text_size === 'lg') setTextSize(data.text_size as any);
+        if (typeof data.hide_valid_subs === 'boolean') setHideValidSubs(data.hide_valid_subs);
       });
   }, [coach]);
 
@@ -192,16 +255,23 @@ export default function AttendancePage() {
   const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [showBadges, setShowBadges] = useState(() => localStorage.getItem('attendance_show_badges') !== 'false');
+  const [textSize, setTextSize] = useState<'sm'|'md'|'lg'>(() => (localStorage.getItem('attendance_text_size') as any) ?? 'md');
   const [hideValidSubs, setHideValidSubs] = useState(() => localStorage.getItem('attendance_hide_valid_subs') !== 'false');
   useEffect(() => {
     localStorage.setItem('attendance_show_badges', String(showBadges));
+    localStorage.setItem('attendance_dark_mode', String(darkMode));
+    localStorage.setItem('attendance_text_size', textSize);
+    localStorage.setItem('attendance_hide_valid_subs', String(hideValidSubs));
     if (!coach) return;
     supabase
       .from('coach_preferences' as any)
-      .upsert({ coach_id: coach, show_badges: showBadges }, { onConflict: 'coach_id' })
-      .then(({ error }) => { if (error) console.warn('badges pref save:', error.message); });
-  }, [showBadges, coach]);
+      .upsert({ coach_id: coach, show_badges: showBadges, dark_mode: darkMode, text_size: textSize, hide_valid_subs: hideValidSubs }, { onConflict: 'coach_id' })
+      .then(({ error }) => { if (error) console.warn('prefs save:', error.message); });
+  }, [showBadges, darkMode, textSize, hideValidSubs, coach]);
   const [showBottomBtn, setShowBottomBtn] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyMonth, setHistoryMonth] = useState<string>(() => today().slice(0, 7));
+  const [historyAthleteId, setHistoryAthleteId] = useState<string>("");
   const longPressTimer = useRef<Record<string, number>>({});
   const [forcedCash, setForcedCash] = useState<Set<string>>(new Set());
   const lastScrollY = useRef(0);
@@ -229,23 +299,7 @@ export default function AttendancePage() {
     refetchInterval: 20000,
   });
 
-  // Export attendance as CSV
-  function exportAttendanceCsv() {
-    const header = 'Nume,Prezent,Structura,Plata\n';
-    const rows = (athletes as any[]).map((a: any) => {
-      const isPresent = a.entry?.present ? 'Da' : 'Nu';
-      const isPaid = a.entry?.session_paid ? 'Platit' : '';
-      return `"${a.full_name ?? ''}",${isPresent},"${a.structure ?? ''}","${isPaid}"`;
-    }).join('\n');
-    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `prezenta-${today()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('Export CSV descărcat!');
-  }
+
 
   // Get athletes with subs and entries
   const { data: athletes = [] } = useQuery({
@@ -833,9 +887,9 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className={["uppercase font-hand font-bold leading-tight", darkMode ? "text-[#c8d4e8]" : "text-foreground/80"].join(" ")}>
-                  <span className={["block text-[25px] font-semibold truncate leading-none mb-[-6px] relative z-10", darkMode ? "text-[#8fa3bf]" : "text-foreground/70"].join(" ")}>{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className={["block font-semibold truncate leading-none relative z-10", darkMode ? "text-[#8fa3bf]" : "text-foreground/70", textSize==="sm" ? "text-[14px] mb-0.5" : textSize==="lg" ? "text-[32px] mb-[-8px]" : "text-[25px] mb-[-6px]"].join(" ")}>{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className={["text-[30px] font-black tracking-wide leading-none", darkMode ? "text-[#dde6f0]" : ""].join(" ")}>{String(lastName ?? '').toUpperCase()}</span>
+                    <span className={["font-black tracking-wide leading-none", darkMode ? "text-[#dde6f0]" : "", textSize==="sm" ? "text-[20px]" : textSize==="lg" ? "text-[39px]" : "text-[30px]"].join(" ")}>{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
@@ -850,10 +904,11 @@ export default function AttendancePage() {
                     ))}
                   </div>
                 </div>
-                <div className="absolute bottom-0.5 left-1.5">
-                  <span className="text-[9px] opacity-30 select-none" title={isPerSession ? 'Per ședință' : 'Abonament'}>{isPerSession ? '🎟' : '📋'}</span>
-                </div>
-
+                {isPerSession && (
+                  <div className="absolute top-0 left-0 overflow-hidden w-8 h-8 pointer-events-none">
+                    <div className="absolute top-[6px] left-[-10px] -rotate-45 bg-emerald-500/50 text-[7px] font-black text-white w-[36px] text-center leading-none py-[2px] select-none">CASH</div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -1207,10 +1262,23 @@ return;
               </button>
             </div>
 
-            <div className="pt-2">
+            <div>
+              <div className="text-sm font-semibold mb-2">Dimensiune text</div>
+              <div className="flex gap-2">
+                {(["sm","md","lg"] as const).map((s) => (
+                  <button key={s} type="button" onClick={() => setTextSize(s)}
+                    className={["flex-1 rounded-xl border-2 py-2 text-sm font-bold transition-colors",
+                      textSize === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"
+                    ].join(" ")}
+                  >{s==="sm" ? "↓ Mai mic" : s==="lg" ? "↑ Mai mare" : "◎ Mediu"}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 space-y-2">
               <Button type="button" variant="outline" className="w-full justify-start gap-2"
-                onClick={() => { exportAttendanceCsv(); setSettingsOpen(false); }}>
-                📥 Export prezență CSV
+                onClick={() => { setHistoryOpen(true); setSettingsOpen(false); }}>
+                📅 Istoric prezențe
               </Button>
             <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
             </div>
@@ -1218,6 +1286,35 @@ return;
         </SheetContent>
       </Sheet>
     </div>
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent side="bottom" className="h-[92vh] overflow-y-auto p-0">
+          <SheetHeader className="sticky top-0 z-10 bg-background border-b px-4 py-3">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-base">Istoric Prezențe</SheetTitle>
+              <button onClick={() => setHistoryOpen(false)} className="p-1 rounded-md hover:bg-muted"><X className="w-5 h-5" /></button>
+            </div>
+          </SheetHeader>
+          <div className="px-4 pt-3 pb-8 space-y-4">
+            <div>
+              <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Sportiv</label>
+              <select className="w-full mt-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm outline-none"
+                value={historyAthleteId} onChange={e => setHistoryAthleteId(e.target.value)}>
+                <option value="">— Toți sportivii —</option>
+                {(athletes as any[]).map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.full_name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center justify-between">
+              <button className="p-2 rounded-lg hover:bg-muted" onClick={() => setHistoryMonth(mm => { const d = new Date(mm + '-01'); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })}><ChevronLeft className="w-5 h-5" /></button>
+              <span className="font-bold text-base">{new Date(historyMonth + '-01').toLocaleDateString('ro-RO', { month: 'long', year: 'numeric' })}</span>
+              <button className="p-2 rounded-lg hover:bg-muted" onClick={() => setHistoryMonth(mm => { const d = new Date(mm + '-01'); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 7); })}><ChevronRight className="w-5 h-5" /></button>
+            </div>
+            <HistoryCalendar month={historyMonth} athleteId={historyAthleteId} athletes={athletes as any[]} />
+          </div>
+        </SheetContent>
+      </Sheet>
+
     </>
   );
 }
