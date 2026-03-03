@@ -541,23 +541,39 @@ export default function AttendancePage() {
     return () => window.removeEventListener('scroll', onScroll);
   }, [activeLetter]);
 
-  // Bottom button: visible at top; hides on scroll; reappears after 5s idle
+  // Bottom button + tab bar hide/show on scroll
   useEffect(() => {
     let idleTimer: number | null = null;
+    // Find tab bar: try common selectors
+    const getTabBar = () => document.querySelector<HTMLElement>('#bottom-nav');
+
+    const showTabBar = () => {
+      const tb = getTabBar(); if (tb) tb.style.transform = '';
+    };
+    const hideTabBar = () => {
+      const tb = getTabBar(); if (tb) tb.style.transform = 'translateY(100%)';
+    };
+
     const resetIdle = () => {
       if (idleTimer) window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => setShowBottomBtn(true), 5000);
+      idleTimer = window.setTimeout(() => { setShowBottomBtn(true); }, 5000);
     };
     const onScroll = () => {
       const y = window.scrollY;
-      if (y < 10) { setShowBottomBtn(true); if (idleTimer) window.clearTimeout(idleTimer); return; }
+      if (y < 10) {
+        setShowBottomBtn(true);
+        showTabBar();
+        if (idleTimer) window.clearTimeout(idleTimer);
+        return;
+      }
       setShowBottomBtn(false);
+      hideTabBar();
       lastScrollY.current = y;
       resetIdle();
     };
     const onTouch = () => {
       if (idleTimer) window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => setShowBottomBtn(true), 5000);
+      idleTimer = window.setTimeout(() => { setShowBottomBtn(true); }, 5000);
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('touchstart', onTouch, { passive: true });
@@ -565,6 +581,7 @@ export default function AttendancePage() {
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('touchstart', onTouch);
       if (idleTimer) window.clearTimeout(idleTimer);
+      showTabBar(); // restore on unmount
     };
   }, []);
 
@@ -580,20 +597,21 @@ export default function AttendancePage() {
     <>
     <style>{`@keyframes exclamFlash { 0%,100% { color: rgb(156 163 175 / 0.4); } 50% { color: rgb(239 68 68); } }`}</style>
     <div className={["pb-24 min-h-screen transition-colors duration-200", darkMode ? "bg-[#1a1f2e] text-[#e2e8f0]" : ""].join(" ")}>
+      <div className={["sticky top-0 z-30 border-b border-border/40 backdrop-blur", darkMode ? "bg-[#1a1f2e]/95" : "bg-background/95"].join(" ")}>
       <div className="relative">
-        <div className="px-4 pt-4 pb-3">
-          <div className="flex items-center gap-3">
+        <div className="px-3 pt-2 pb-1">
+          <div className="flex items-center gap-2">
             {/* Avatar placeholder */}
-            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border">
-              <span className="text-lg font-bold text-muted-foreground">
+            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border border-border">
+              <span className="text-sm font-bold text-muted-foreground">
                 {String(coach ?? '?')[0].toUpperCase()}
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xl font-bold leading-tight">
+              <div className="text-base font-bold leading-tight">
                 Prezență {formatDateRo(today())}
               </div>
-              <div className="text-sm text-muted-foreground font-medium">
+              <div className="text-[15px] text-muted-foreground font-semibold leading-tight">
                 {coach ?? ''}
                 {presentCount > 0 && <>
                   {count1000 > 0 && <> · {count1000}×1000m</>}
@@ -658,14 +676,14 @@ export default function AttendancePage() {
         </div>
       </div>
       {/* Search bar */}
-      <div className="px-4 pb-2">
+      <div className="px-3 pb-1.5">
         <div className="relative">
           <input
             type="search"
             placeholder="Caută sportiv..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-border bg-muted/40 px-4 py-2 text-sm pl-8 outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-sm pl-7 outline-none focus:ring-2 focus:ring-primary/30"
           />
           <span className="absolute left-2.5 top-2.5 text-muted-foreground text-xs">🔍</span>
           {searchQuery && (
@@ -674,6 +692,7 @@ export default function AttendancePage() {
         </div>
       </div>
 
+      </div>
       {needsAttention.length > 0 && !needsAttentionDismissed && (
         <div className={["mx-0 mb-2 border-b border-warning/30 bg-warning/5 overflow-hidden transition-all", showNeedsAttention ? "sticky top-0 z-10 backdrop-blur" : ""].join(" ")}>
           <div className="flex items-center gap-1 px-3 py-2 flex-wrap">
@@ -912,8 +931,23 @@ export default function AttendancePage() {
 
       {/* Alphabet quick scroll (shows only on fast scroll; tap/scrub supported) */}
       {showIndex && (
+        <>
+        {/* Scroll-to-top: circle button, bottom-right, left of alpha bar */}
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          title="Înapoi sus"
+          className="fixed bottom-16 right-9 z-40 w-11 h-11 rounded-full flex items-center justify-center select-none transition-all duration-150 active:scale-90 active:brightness-75"
+          style={{
+            background: 'linear-gradient(180deg, #374151 0%, #1f2937 100%)',
+            boxShadow: '0 2px 0 #111827, 0 4px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.13)',
+          }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="18 15 12 9 6 15" />
+          </svg>
+        </button>
         <div
-          className="fixed right-1 top-24 z-20 rounded-full bg-background/25 backdrop-blur border border-border/30 px-0.5 py-1 shadow-sm select-none"
+          className="fixed right-1 top-2 bottom-14 z-30 rounded-full bg-background/25 backdrop-blur border border-border/30 px-0.5 py-1 shadow-sm select-none flex flex-col"
           onPointerDown={(e) => {
             (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
             setShowIndex(true);
@@ -927,7 +961,7 @@ export default function AttendancePage() {
             scrollToLetter(l);
           }}
         >
-          <div className="flex flex-col items-center gap-0.5">
+          <div className="flex flex-col items-center justify-between w-full flex-1 min-h-0 overflow-hidden">
             {LETTERS.map((l) => {
               const has = (grouped.get(l) ?? []).length > 0;
               const isActive = l === activeLetter;
@@ -936,11 +970,11 @@ export default function AttendancePage() {
                   key={l}
                   type="button"
                   disabled={!has}
-                  className={`w-6 h-5 flex items-center justify-center rounded text-[22px] font-bold transition ${
+                  className={`w-6 flex-1 flex items-center justify-center rounded text-[13px] font-bold transition ${
                     !has
                       ? 'opacity-20 text-foreground/40'
                       : isActive
-                        ? 'text-foreground/80 scale-[1.4]'
+                        ? 'text-foreground/80 scale-[1.3] text-[16px]'
                         : 'text-foreground/50'
                   }`}
                   onClick={(e) => {
@@ -954,36 +988,28 @@ export default function AttendancePage() {
             })}
           </div>
         </div>
+        </>
       )}
 
       <div className={[
-        "fixed bottom-16 left-0 right-0 px-3 pb-2 transition-all duration-300",
+        "fixed bottom-16 left-0 right-0 px-4 pb-2 transition-all duration-300 z-40",
         showBottomBtn ? "translate-y-0 opacity-100" : "translate-y-24 opacity-0 pointer-events-none"
       ].join(" ")}>
-        <div>
-          <button
-            onClick={() => { if (presentCount > 0) setConfirmFinalize(true); }}
-            disabled={presentCount === 0}
-            className={[
-              "flex-1 h-14 rounded-2xl flex items-center justify-center gap-2 text-white font-black text-base shadow-lg transition-all",
-              "bg-gradient-to-b from-teal-500 to-teal-700",
-              "shadow-teal-700/40",
-              "active:scale-[0.98]",
-              presentCount === 0 ? "opacity-50 cursor-not-allowed" : "hover:shadow-teal-600/60",
-              "border border-teal-400/30",
-            ].join(" ")}
-            style={{ boxShadow: '0 4px 24px 0 rgba(13,148,136,0.35), inset 0 1px 0 rgba(255,255,255,0.15)' }}
-          >
-            <Timer className="h-5 w-5 flex-shrink-0" />
-            <div className="text-center leading-tight">
-              <div className="text-base font-black">Finalizează &amp; Start Crono</div>
-              <div className="text-xs font-semibold opacity-80">
-                Prezență ({count1000 + count2000}+{countNone})
-              </div>
-            </div>
-          </button>
-
-        </div>
+         <button
+           onClick={() => { if (presentCount > 0) setConfirmFinalize(true); }}
+           disabled={presentCount === 0}
+           className={["w-full h-14 rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-[0.98]",
+             presentCount === 0 ? "opacity-50 cursor-not-allowed" : "",
+           ].join(" ")}
+           style={{
+             background: 'linear-gradient(180deg, #2563eb 0%, #1d4ed8 55%, #1e3fba 100%)',
+             boxShadow: '0 2px 0 #1730a0, 0 8px 28px rgba(29,78,216,0.6), inset 0 1px 0 rgba(255,255,255,0.30), inset 0 -3px 0 rgba(0,0,0,0.22)',
+           }}
+         >
+           <Timer className="h-6 w-6 flex-shrink-0 text-white" />
+           <span className="text-xl font-black tracking-wide text-white">Finalizează</span>
+           <span className="text-sm font-semibold text-blue-200 ml-1">({count1000 + count2000+ countNone})</span>
+         </button>
       </div>
 
       {paymentOverlay && (
@@ -1157,7 +1183,7 @@ return;
               <button type="button" onClick={() => setDarkMode(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   darkMode ? "border-blue-500 bg-[#1a1f2e] text-[#e2e8f0]" : "border-border bg-background text-foreground"].join(" ")}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xl">{darkMode ? "🌙" : "☀️"}</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{darkMode ? "Dark" : "Light"}</div>
@@ -1174,7 +1200,7 @@ return;
               <button type="button" onClick={() => setShowBadges(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   showBadges ? "border-emerald-500 bg-emerald-50" : "border-border bg-background"].join(" ")}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xl">🏅</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{showBadges ? "Badge-uri vizibile" : "Badge-uri ascunse"}</div>
