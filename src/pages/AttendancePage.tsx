@@ -793,7 +793,7 @@ export default function AttendancePage() {
 
           return (
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
-              <div className="sticky top-[92px] z-[5] -mx-4 px-4 py-0.5 bg-background/25 backdrop-blur border-b border-border/30">
+              <div className="sticky top-[92px] z-[5] -mx-4 px-3 leading-none bg-background/20 backdrop-blur border-b border-border/20">
                 <div className={["font-black transition-all duration-200", letter === activeLetter ? "text-3xl text-foreground/80" : "text-base text-foreground/40"].join(" ")}>{letter}</div>
               </div>
 
@@ -830,7 +830,7 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-sm opacity-70 truncate leading-none mb-0.5">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-[18px] font-semibold opacity-55 truncate leading-none mb-[-4px] relative z-10">{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[28px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
@@ -931,27 +931,9 @@ export default function AttendancePage() {
 
       {/* Alphabet quick scroll (shows only on fast scroll; tap/scrub supported) */}
       {showIndex && (
-        <>
-        {/* Scroll-to-top: circle button, bottom-right, left of alpha bar */}
-        <button
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          title="Înapoi sus"
-          className="fixed bottom-16 right-9 z-40 w-11 h-11 rounded-full flex items-center justify-center select-none transition-all duration-150 active:scale-90 active:brightness-75"
-          style={{
-            background: 'linear-gradient(180deg, #374151 0%, #1f2937 100%)',
-            boxShadow: '0 2px 0 #111827, 0 4px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.13)',
-          }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
-        </button>
         <div
-          className="fixed right-1 top-2 bottom-14 z-30 rounded-full bg-background/25 backdrop-blur border border-border/30 px-0.5 py-1 shadow-sm select-none flex flex-col"
-          onPointerDown={(e) => {
-            (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-            setShowIndex(true);
-          }}
+          className="fixed right-1 top-2 bottom-14 z-30 rounded-full bg-background/25 backdrop-blur border border-border/30 px-0.5 py-1 shadow-sm flex flex-col"
+          style={{ touchAction: 'none' }}
           onPointerMove={(e) => {
             if (e.buttons === 0) return;
             const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
@@ -970,16 +952,16 @@ export default function AttendancePage() {
                   key={l}
                   type="button"
                   disabled={!has}
-                  className={`w-6 flex-1 flex items-center justify-center rounded text-[13px] font-bold transition ${
+                  className={`w-7 flex-1 flex items-center justify-center rounded font-black transition-all duration-100 ${
                     !has
-                      ? 'opacity-20 text-foreground/40'
+                      ? 'opacity-20 text-foreground/30 text-[14px]'
                       : isActive
-                        ? 'text-foreground/80 scale-[1.3] text-[16px]'
-                        : 'text-foreground/50'
+                        ? 'text-foreground/90 text-[20px] scale-110'
+                        : 'text-foreground/60 text-[16px]'
                   }`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    scrollToLetter(l);
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    if (has) scrollToLetter(l);
                   }}
                 >
                   {l}
@@ -987,8 +969,18 @@ export default function AttendancePage() {
               );
             })}
           </div>
+          {/* Scroll to top arrow */}
+          <button
+            onPointerDown={(e) => { e.stopPropagation(); window.scrollTo({ top: 0, behavior: 'auto' }); }}
+            className="mt-0.5 w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full transition-all active:scale-90 active:opacity-60 mx-auto"
+            style={{ background: 'linear-gradient(180deg,#374151 0%,#1f2937 100%)', boxShadow: '0 1px 0 #111827, inset 0 1px 0 rgba(255,255,255,0.12)' }}
+            title="Înapoi sus"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+          </button>
         </div>
-        </>
       )}
 
       <div className={[
