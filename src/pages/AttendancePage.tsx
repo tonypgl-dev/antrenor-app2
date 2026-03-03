@@ -117,11 +117,14 @@ function kindSafe(kind: any): 'COACHING' | 'GYM' | 'UNKNOWN' {
 function formatDateRo(dateISO: string) {
   const [y, m, d] = dateISO.split('-').map(Number);
   const months = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
-  return `${d} ${months[m - 1] ?? ''}`;
+  const days = ['Duminică','Luni','Marți','Miercuri','Joi','Vineri','Sâmbătă'];
+  const dow = new Date(y, m - 1, d).getDay();
+  return `${days[dow]} ${d} ${months[m - 1] ?? ''}`;
 }
 
 export default function AttendancePage() {
   const { coach } = useCoach();
+  const [coachPhotoUrl] = useState<string | null>(() => localStorage.getItem('coach_photo_url') ?? 'https://i.ibb.co/99vDChQW/daniela.png');
 
   // UI preferences (persisted)
   type SortMode = 'FIRST' | 'SECOND';
@@ -603,11 +606,12 @@ export default function AttendancePage() {
       <div className="relative">
         <div className="px-3 pt-2 pb-1">
           <div className="flex items-center gap-2">
-            {/* Avatar placeholder */}
-            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border border-border">
-              <span className="text-sm font-bold text-muted-foreground">
-                {String(coach ?? '?')[0].toUpperCase()}
-              </span>
+            {/* Coach avatar */}
+            <div className="w-12 h-12 rounded-full flex-shrink-0 border-2 border-border overflow-hidden bg-muted flex items-center justify-center">
+              {coachPhotoUrl
+                ? <img src={coachPhotoUrl} alt={coach ?? ''} className="w-full h-full object-cover" />
+                : <span className="text-sm font-bold text-muted-foreground">{String(coach ?? '?')[0].toUpperCase()}</span>
+              }
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-base font-bold leading-tight">
@@ -616,9 +620,9 @@ export default function AttendancePage() {
               <div className="text-[15px] text-muted-foreground font-semibold leading-tight">
                 {coach ?? ''}
                 {presentCount > 0 && <>
-                  {count1000 > 0 && <> · {count1000}×1000m</>}
-                  {count2000 > 0 && <> · {count2000}×2000m</>}
-                  {countNone > 0 && <> · {countNone} nedistribuiți</>}
+                  {count1000 > 0 && <> · <span className="text-emerald-500 font-black">{count1000}</span></>}
+                  {count2000 > 0 && <> · <span className="text-teal-400 font-black">{count2000}</span></>}
+                  {countNone > 0 && <> · <span className="text-foreground/45 font-black">{countNone}</span></>}
                 </>}
                 {presentCount === 0 && <> · 0 prezenți</>}
               </div>
@@ -778,19 +782,7 @@ export default function AttendancePage() {
       )}
 
       {/* ── DUPLICATE SESSION BANNER ── */}
-      {existingTimingSession && (
-        <div className="mx-4 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-amber-800">Sesiune de cronometrare existentă azi</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                A fost creată o sesiune de cronometrare pentru astăzi. Dacă apeși „Start Crono", vei continua sesiunea existentă (nu se creează una nouă).
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       <div className="px-4 space-y-3">
         {LETTERS.map((letter) => {
@@ -801,7 +793,7 @@ export default function AttendancePage() {
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
                {letter !== 'A' && (
                <div className="sticky top-[92px] z-[5] -mx-4 px-3 border-b border-border/30 bg-transparent text-center">
-                 <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/40" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
+                 <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/50" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
                </div>
                )}
 
@@ -840,10 +832,10 @@ export default function AttendancePage() {
               ].join(" ")}
             >
               <div className="min-w-0 flex-1">
-                <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-[25px] font-semibold text-foreground/70 truncate leading-none mb-[-6px] relative z-10">{String(firstNames ?? '').toUpperCase()}</span>
+                <div className={["uppercase font-hand font-bold leading-tight", darkMode ? "text-[#c8d4e8]" : "text-foreground/80"].join(" ")}>
+                  <span className={["block text-[25px] font-semibold truncate leading-none mb-[-6px] relative z-10", darkMode ? "text-[#8fa3bf]" : "text-foreground/70"].join(" ")}>{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[30px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
+                    <span className={["text-[30px] font-black tracking-wide leading-none", darkMode ? "text-[#dde6f0]" : ""].join(" ")}>{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
@@ -1010,7 +1002,7 @@ export default function AttendancePage() {
          >
            <Timer className="h-6 w-6 flex-shrink-0 text-white" />
            <span className="text-xl font-black tracking-wide text-white">Finalizează</span>
-           <span className="text-sm font-semibold text-blue-200 ml-1">({count1000 + count2000+ countNone})</span>
+           <span className="text-sm font-semibold text-blue-200 ml-1">({count1000 + count2000}{countNone > 0 ? `+${countNone}` : ''})</span>
          </button>
       </div>
 
