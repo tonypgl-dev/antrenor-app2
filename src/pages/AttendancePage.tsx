@@ -100,7 +100,7 @@ function getSubStatus(expiresISO?: string | null): SubStatus {
 }
 
 function statusTextClass(s: SubStatus) {
-  if (s === 'valid') return 'text-emerald-500';
+  if (s === 'valid') return 'text-emerald-600';
   if (s === 'expiring') return 'text-orange-500';
   if (s === 'expired') return 'text-rose-600';
   return 'text-muted-foreground';
@@ -181,10 +181,15 @@ export default function AttendancePage() {
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [renewSheet, setRenewSheet] = useState<{ athleteId: string; athleteName: string } | null>(null);
   const [showNeedsAttention, setShowNeedsAttention] = useState(true);
-  const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(false);
+  const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(true);
+  // Flash ! icon until user opens it for the first time today
+  const [attentionFlashDone, setAttentionFlashDone] = useState(() =>
+    localStorage.getItem('attention_flash_done_date') === today()
+  );
   const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [showBadges, setShowBadges] = useState(() => localStorage.getItem('attendance_show_badges') !== 'false');
+  const [hideValidSubs, setHideValidSubs] = useState(() => localStorage.getItem('attendance_hide_valid_subs') === 'true');
   useEffect(() => {
     localStorage.setItem('attendance_show_badges', String(showBadges));
     if (!coach) return;
@@ -519,7 +524,7 @@ export default function AttendancePage() {
 
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [activeLetter, setActiveLetter] = useState<(typeof LETTERS)[number]>('A');
-  const { show: showIndex, setShow: setShowIndex } = useShowIndexOnFastScroll({ velocityThreshold: 0.8, hideDelayMs: 800 });
+  const { show: showIndex, setShow: setShowIndex } = useShowIndexOnFastScroll({ velocityThreshold: 0.8, hideDelayMs: 3000 });
 
   useEffect(() => {
     const onScroll = () => {
@@ -536,17 +541,31 @@ export default function AttendancePage() {
     return () => window.removeEventListener('scroll', onScroll);
   }, [activeLetter]);
 
-  // Auto-hide bottom button on scroll
+  // Bottom button: visible at top; hides on scroll; reappears after 5s idle
   useEffect(() => {
+    let idleTimer: number | null = null;
+    const resetIdle = () => {
+      if (idleTimer) window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => setShowBottomBtn(true), 5000);
+    };
     const onScroll = () => {
       const y = window.scrollY;
-      if (y < 10) { setShowBottomBtn(true); return; }
-      if (y > lastScrollY.current + 8) setShowBottomBtn(false);
-      else if (y < lastScrollY.current - 8) setShowBottomBtn(true);
+      if (y < 10) { setShowBottomBtn(true); if (idleTimer) window.clearTimeout(idleTimer); return; }
+      setShowBottomBtn(false);
       lastScrollY.current = y;
+      resetIdle();
+    };
+    const onTouch = () => {
+      if (idleTimer) window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => setShowBottomBtn(true), 5000);
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    window.addEventListener('touchstart', onTouch, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('touchstart', onTouch);
+      if (idleTimer) window.clearTimeout(idleTimer);
+    };
   }, []);
 
   const scrollToLetter = (l: (typeof LETTERS)[number]) => {
@@ -558,22 +577,23 @@ export default function AttendancePage() {
   };
 
   return (
+    <>
+    <style>{`@keyframes exclamFlash { 0%,100% { color: rgb(156 163 175 / 0.4); } 50% { color: rgb(239 68 68); } }`}</style>
     <div className={["pb-24 min-h-screen transition-colors duration-200", darkMode ? "bg-[#1a1f2e] text-[#e2e8f0]" : ""].join(" ")}>
-      <div className={["sticky top-0 z-20 backdrop-blur border-b border-border/40", darkMode ? "bg-[#1a1f2e]/95" : "bg-background/95"].join(" ")}>
       <div className="relative">
-        <div className="px-3 pt-2 pb-1">
-          <div className="flex items-center gap-2">
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-center gap-3">
             {/* Avatar placeholder */}
-            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border border-border">
-              <span className="text-sm font-bold text-muted-foreground">
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border">
+              <span className="text-lg font-bold text-muted-foreground">
                 {String(coach ?? '?')[0].toUpperCase()}
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-base font-bold leading-tight">
+              <div className="text-xl font-bold leading-tight">
                 Prezență {formatDateRo(today())}
               </div>
-              <div className="text-xs text-muted-foreground font-medium">
+              <div className="text-sm text-muted-foreground font-medium">
                 {coach ?? ''}
                 {presentCount > 0 && <>
                   {count1000 > 0 && <> · {count1000}×1000m</>}
@@ -585,35 +605,75 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="absolute right-3 top-3 h-9 w-9"
-          onClick={() => setSettingsOpen(true)}
-          title="Setări listă"
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
+        <div className="absolute right-2 top-1.5 flex items-center gap-0.5">
+          {/* Hide valid subs toggle */}
+          <button
+            type="button"
+            onClick={() => setHideValidSubs(v => !v)}
+            className={["flex items-center h-8 px-1.5 rounded-lg transition-colors gap-1",
+              hideValidSubs ? "text-primary" : "text-muted-foreground/40 hover:text-muted-foreground"
+            ].join(" ")}
+            title={hideValidSubs ? "Afișează toate abonamentele" : "Ascunde abonamentele valabile"}
+          >
+            <span className="text-[9px] font-bold leading-none">AB</span>
+            <div className={["w-8 h-4 rounded-full relative transition-colors flex-shrink-0", hideValidSubs ? "bg-primary" : "bg-muted-foreground/25"].join(" ")}>
+              <div className={["absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform", hideValidSubs ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+            </div>
+          </button>
+          {/* ! icon — always visible when needs attention has items */}
+          {needsAttention.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setNeedsAttentionDismissed(false);
+                setShowNeedsAttention(true);
+                if (!attentionFlashDone) {
+                  localStorage.setItem('attention_flash_done_date', today());
+                  setAttentionFlashDone(true);
+                }
+              }}
+              className={[
+                "h-8 w-6 flex items-center justify-center transition-colors",
+                needsAttentionDismissed && !attentionFlashDone
+                  ? "animate-[exclamFlash_1s_ease-in-out_infinite]"
+                  : needsAttentionDismissed
+                    ? "text-muted-foreground/40 hover:text-warning"
+                    : "text-warning"
+              ].join(" ")}
+              title="Arată 'Necesită atenție'"
+            >
+              <span className="text-lg font-black leading-none">!</span>
+            </button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setSettingsOpen(true)}
+            title="Setări listă"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
       {/* Search bar */}
-      <div className="px-3 pb-1.5">
+      <div className="px-4 pb-2">
         <div className="relative">
           <input
             type="search"
             placeholder="Caută sportiv..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-sm pl-7 outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full rounded-xl border border-border bg-muted/40 px-4 py-2 text-sm pl-8 outline-none focus:ring-2 focus:ring-primary/30"
           />
-          <span className="absolute left-2 top-2 text-muted-foreground text-xs">🔍</span>
+          <span className="absolute left-2.5 top-2.5 text-muted-foreground text-xs">🔍</span>
           {searchQuery && (
             <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-2 text-muted-foreground text-lg leading-none">×</button>
           )}
         </div>
       </div>
 
-      </div>
       {needsAttention.length > 0 && !needsAttentionDismissed && (
         <div className={["mx-0 mb-2 border-b border-warning/30 bg-warning/5 overflow-hidden transition-all", showNeedsAttention ? "sticky top-0 z-10 backdrop-blur" : ""].join(" ")}>
           <div className="flex items-center gap-1 px-3 py-2 flex-wrap">
@@ -707,15 +767,15 @@ export default function AttendancePage() {
         </div>
       )}
 
-      <div className="px-2 space-y-2">
+      <div className="px-4 space-y-3">
         {LETTERS.map((letter) => {
           const list = grouped.get(letter) ?? [];
           if (list.length === 0) return null;
 
           return (
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
-              <div className="sticky top-[92px] z-[5] -mx-4 px-4 py-1.5 bg-background/90 backdrop-blur border-b">
-                <div className="text-xl font-bold text-foreground/80">{letter}</div>
+              <div className="sticky top-[92px] z-[5] -mx-4 px-4 py-0.5 bg-background/25 backdrop-blur border-b border-border/30">
+                <div className={["font-black transition-all duration-200", letter === activeLetter ? "text-3xl text-foreground/80" : "text-base text-foreground/40"].join(" ")}>{letter}</div>
               </div>
 
               <div className="space-y-0.5 mt-1">
@@ -742,7 +802,7 @@ export default function AttendancePage() {
               key={athlete.id}
               onClick={() => togglePresent.mutate(athlete)}
               className={[
-                "relative flex items-center justify-between rounded px-1.5 py-1 transition-all cursor-pointer active:scale-[0.99]",
+                "relative flex items-center justify-between rounded-md px-2 py-1.5 transition-all cursor-pointer active:scale-[0.99]",
                 isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
                 darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
                 darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
@@ -751,9 +811,9 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-[17px] font-semibold opacity-55 truncate leading-none">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-sm opacity-70 truncate leading-none mb-0.5">{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[26px] font-black tracking-wide leading-none -mt-0.5">{String(lastName ?? '').toUpperCase()}</span>
+                    <span className="text-[28px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
@@ -783,8 +843,12 @@ export default function AttendancePage() {
                   }}
                   title={isPerSession ? 'Per ședință' : 'Tap pentru reînnoire'}
                 >
-                  {!isPerSession && <div className={statusTextClass(cStatus)}>AB {cText}</div>}
-                  <div className={statusTextClass(gStatus)}>Sală {gText}</div>
+                  {!isPerSession && (!hideValidSubs || cStatus === 'expired' || cStatus === 'expiring') && (
+                    <div className={statusTextClass(cStatus)}>AB {cText}</div>
+                  )}
+                  {(!hideValidSubs || gStatus === 'expired' || gStatus === 'expiring') && (
+                    <div className={statusTextClass(gStatus)}>Sală {gText}</div>
+                  )}
                 </div>
 
                 {isPerSession && isPresent && !isPaidSession && (
@@ -849,7 +913,7 @@ export default function AttendancePage() {
       {/* Alphabet quick scroll (shows only on fast scroll; tap/scrub supported) */}
       {showIndex && (
         <div
-          className="fixed right-2 top-24 z-20 rounded-full bg-background/70 backdrop-blur border px-1 py-2 shadow-sm select-none"
+          className="fixed right-1 top-24 z-20 rounded-full bg-background/25 backdrop-blur border border-border/30 px-0.5 py-1 shadow-sm select-none"
           onPointerDown={(e) => {
             (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
             setShowIndex(true);
@@ -872,12 +936,12 @@ export default function AttendancePage() {
                   key={l}
                   type="button"
                   disabled={!has}
-                  className={`w-7 flex items-center justify-center rounded font-bold transition-all duration-100 ${
+                  className={`w-6 h-5 flex items-center justify-center rounded text-[22px] font-bold transition ${
                     !has
-                      ? 'opacity-20 text-[13px] h-4'
+                      ? 'opacity-20 text-foreground/40'
                       : isActive
-                        ? 'text-primary text-[22px] h-7 scale-110'
-                        : 'text-foreground/60 text-[14px] h-4'
+                        ? 'text-foreground/80 scale-[1.4]'
+                        : 'text-foreground/50'
                   }`}
                   onClick={(e) => {
                     e.preventDefault();
@@ -896,7 +960,7 @@ export default function AttendancePage() {
         "fixed bottom-16 left-0 right-0 px-3 pb-2 transition-all duration-300",
         showBottomBtn ? "translate-y-0 opacity-100" : "translate-y-24 opacity-0 pointer-events-none"
       ].join(" ")}>
-        <div className="flex gap-2">
+        <div>
           <button
             onClick={() => { if (presentCount > 0) setConfirmFinalize(true); }}
             disabled={presentCount === 0}
@@ -918,11 +982,7 @@ export default function AttendancePage() {
               </div>
             </div>
           </button>
-          <button
-            onClick={exportAttendanceCsv}
-            className="h-14 w-14 rounded-2xl flex items-center justify-center bg-muted border border-border text-xl shadow-sm active:scale-95"
-            title="Export CSV"
-          >📥</button>
+
         </div>
       </div>
 
@@ -1097,7 +1157,7 @@ return;
               <button type="button" onClick={() => setDarkMode(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   darkMode ? "border-blue-500 bg-[#1a1f2e] text-[#e2e8f0]" : "border-border bg-background text-foreground"].join(" ")}>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <span className="text-xl">{darkMode ? "🌙" : "☀️"}</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{darkMode ? "Dark" : "Light"}</div>
@@ -1114,7 +1174,7 @@ return;
               <button type="button" onClick={() => setShowBadges(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   showBadges ? "border-emerald-500 bg-emerald-50" : "border-border bg-background"].join(" ")}>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <span className="text-xl">🏅</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{showBadges ? "Badge-uri vizibile" : "Badge-uri ascunse"}</div>
@@ -1128,11 +1188,16 @@ return;
             </div>
 
             <div className="pt-2">
-              <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
+              <Button type="button" variant="outline" className="w-full justify-start gap-2"
+                onClick={() => { exportAttendanceCsv(); setSettingsOpen(false); }}>
+                📥 Export prezență CSV
+              </Button>
+            <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
             </div>
           </div>
         </SheetContent>
       </Sheet>
     </div>
+    </>
   );
 }
