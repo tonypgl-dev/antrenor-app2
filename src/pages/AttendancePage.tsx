@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useCoach } from '@/hooks/useCoach';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { Timer, AlertTriangle, Settings } from 'lucide-react';
+import { Timer, AlertTriangle, Settings, CalendarDays, ChevronLeft, ChevronRight, X as XIcon } from 'lucide-react';
 import { addDays, addMonths, format, parseISO, subDays } from 'date-fns';
 import {
   AlertDialog,
@@ -120,6 +120,71 @@ function formatDateRo(dateISO: string) {
   return `${d} ${months[m - 1] ?? ''}`;
 }
 
+
+// ─── CalendarCell with long-press ────────────────────────────────────────────
+function CalendarCell({ dateStr, day, bg, border, isToday, isFreeDay, isPresent, count, isClickable, isLongPressable, onClick, onLongPress }: {
+  dateStr: string; day: number; bg: string; border: string;
+  isToday: boolean; isFreeDay: boolean; isPresent: boolean; count: number;
+  isClickable: boolean; isLongPressable: boolean;
+  onClick: () => void; onLongPress: () => void;
+}) {
+  const timerRef = useRef<number | null>(null);
+  const [pressing, setPressing] = useState(false);
+
+  const startPress = () => {
+    if (!isLongPressable) return;
+    setPressing(true);
+    timerRef.current = window.setTimeout(() => {
+      setPressing(false);
+      onLongPress();
+    }, 2000);
+  };
+
+  const cancelPress = () => {
+    setPressing(false);
+    if (timerRef.current) { window.clearTimeout(timerRef.current); timerRef.current = null; }
+  };
+
+  return (
+    <div
+      className={[
+        'relative rounded-lg border p-1 min-h-[44px] flex flex-col items-center select-none',
+        bg, border,
+        isToday ? 'ring-2 ring-primary' : '',
+        isClickable ? 'cursor-pointer active:scale-95' : '',
+        isLongPressable ? 'cursor-pointer' : '',
+        'transition-transform',
+      ].join(' ')}
+      onClick={() => { if (!pressing) onClick(); }}
+      onPointerDown={startPress}
+      onPointerUp={cancelPress}
+      onPointerLeave={cancelPress}
+      onPointerCancel={cancelPress}
+    >
+      {/* Long press progress ring */}
+      {pressing && (
+        <div className="absolute inset-0 rounded-lg overflow-hidden">
+          <div className="absolute inset-0 bg-orange-200/60 animate-pulse" />
+        </div>
+      )}
+      <span className={[
+        'text-xs font-semibold leading-none mt-0.5 relative z-10',
+        isToday ? 'text-primary' : isFreeDay ? 'text-gray-300' : 'text-foreground/80',
+      ].join(' ')}>{day}</span>
+
+      {isPresent && !isFreeDay && (
+        <span className="mt-1 w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 relative z-10" />
+      )}
+      {count > 0 && !isFreeDay && (
+        <span className="text-[9px] font-bold text-emerald-700 leading-none mt-0.5 relative z-10">{count}</span>
+      )}
+      {isFreeDay && (
+        <span className="text-[9px] text-gray-400 mt-0.5 relative z-10">lib.</span>
+      )}
+    </div>
+  );
+}
+
 export default function AttendancePage() {
   const { coach } = useCoach();
 
@@ -180,7 +245,15 @@ export default function AttendancePage() {
   const [paymentOverlay, setPaymentOverlay] = useState<{ name: string; amount: number } | null>(null);
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [renewSheet, setRenewSheet] = useState<{ athleteId: string; athleteName: string } | null>(null);
-  const [showNeedsAttention, setShowNeedsAttention] = useState(true);
+  const [showNeedsAttention, setShowNeedsAttention] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyMonth, setHistoryMonth] = useState<string>(() => today().slice(0, 7));
+  const [historyAthleteId, setHistoryAthleteId] = useState<string>('');
+  const [freeDays, setFreeDays] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('attendance_free_days') ?? '[]'); } catch { return []; }
+  });
+  const [selectedDayDetail, setSelectedDayDetail] = useState<string | null>(null); // dateStr
+  useEffect(() => { localStorage.setItem('attendance_free_days', JSON.stringify(freeDays)); }, [freeDays]);
   const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(false);
   const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
@@ -217,6 +290,100 @@ export default function AttendancePage() {
       return data;
     },
     refetchInterval: 20000,
+  });
+
+  // History: fetch all attendance days + entries for selected month
+  const { data: historyDays = [] } = useQuery({
+    queryKey: ['history-days', historyMonth],
+    enabled: historyOpen,
+    queryFn: async () => {
+      const [y, m] = historyMonth.split('-').map(Number);
+      const from = `${historyMonth}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const to = `${historyMonth}-${String(lastDay).padStart(2, '0')}`;
+      const { data, error } = await supabase
+        .from('attendance_days')
+        .select('id, date, status')
+        .gte('date', from)
+        .lte('date', to)
+        .order('date');
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: historyEntries = [] } = useQuery({
+    queryKey: ['history-entries', historyMonth, historyAthleteId],
+    enabled: historyOpen && historyDays.length > 0,
+    queryFn: async () => {
+      const dayIds = (historyDays as any[]).map((d: any) => d.id);
+      if (!dayIds.length) return [];
+      let q = supabase
+        .from('attendance_entries')
+        .select('attendance_day_id, athlete_id, present, session_paid')
+        .in('attendance_day_id', dayIds)
+        .eq('present', true);
+      if (historyAthleteId) q = q.eq('athlete_id', historyAthleteId);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Detail day: fetch attendees + race results
+  const { data: detailData, isLoading: detailLoading } = useQuery({
+    queryKey: ['day-detail', selectedDayDetail],
+    enabled: !!selectedDayDetail,
+    queryFn: async () => {
+      const { data: ad } = await supabase
+        .from('attendance_days')
+        .select('id, date, status')
+        .eq('date', selectedDayDetail!)
+        .maybeSingle();
+      if (!ad) return null;
+
+      const { data: entries } = await supabase
+        .from('attendance_entries')
+        .select('athlete_id, present, session_paid')
+        .eq('attendance_day_id', ad.id)
+        .eq('present', true);
+
+      const athleteIds = (entries ?? []).map((e: any) => e.athlete_id);
+      if (!athleteIds.length) return { date: ad.date, athletes: [] };
+
+      const { data: athleteRows } = await supabase
+        .from('athletes')
+        .select('id, full_name, default_race, payment_mode')
+        .in('id', athleteIds);
+
+      // Get race results for this day
+      const dayStart = selectedDayDetail + 'T00:00:00';
+      const dayEnd = selectedDayDetail + 'T23:59:59';
+      const { data: results } = await supabase
+        .from('race_results')
+        .select('athlete_id, result_ms, is_simulation')
+        .gte('recorded_at', dayStart)
+        .lte('recorded_at', dayEnd)
+        .in('athlete_id', athleteIds);
+
+      const resultMap = new Map((results ?? []).map((r: any) => [r.athlete_id, r]));
+      const entryMap = new Map((entries ?? []).map((e: any) => [e.athlete_id, e]));
+
+      return {
+        date: ad.date,
+        athletes: (athleteRows ?? []).map((a: any) => ({
+          ...a,
+          entry: entryMap.get(a.id),
+          result: resultMap.get(a.id) ?? null,
+        })).sort((a: any, b: any) => {
+          // Sort: with result first (by time asc), then without
+          if (a.result && b.result) return a.result.result_ms - b.result.result_ms;
+          if (a.result) return -1;
+          if (b.result) return 1;
+          return String(a.full_name).localeCompare(String(b.full_name));
+        }),
+      };
+    },
   });
 
   // Export attendance as CSV
@@ -1125,12 +1292,295 @@ return;
               </button>
             </div>
 
+            <div>
+              <div className="text-sm font-semibold mb-2">Rapoarte</div>
+              <Button type="button" variant="outline" className="w-full justify-start gap-2"
+                onClick={() => { setSettingsOpen(false); setHistoryOpen(true); }}>
+                <CalendarDays className="h-4 w-4" />
+                Istoric prezențe
+              </Button>
+            </div>
+
             <div className="pt-2">
               <Button type="button" className="w-full" onClick={() => setSettingsOpen(false)}>Închide</Button>
             </div>
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* ── HISTORY SHEET ─────────────────────────────────────── */}
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent side="bottom" className="h-[92vh] flex flex-col p-0 rounded-t-2xl overflow-hidden">
+          <SheetHeader className="px-4 pt-4 pb-2 border-b flex-shrink-0">
+            <SheetTitle className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5" />
+              Istoric Prezențe
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4 pt-3">
+
+            {/* Month nav */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => {
+                  const [y, m] = historyMonth.split('-').map(Number);
+                  const d = new Date(y, m - 2, 1);
+                  setHistoryMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+                }}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-border hover:bg-muted"
+              ><ChevronLeft className="h-4 w-4" /></button>
+
+              <span className="font-bold text-base">
+                {(() => {
+                  const [y, m] = historyMonth.split('-').map(Number);
+                  const months = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+                  return `${months[m-1]} ${y}`;
+                })()}
+              </span>
+
+              <button
+                onClick={() => {
+                  const [y, m] = historyMonth.split('-').map(Number);
+                  const d = new Date(y, m, 1);
+                  setHistoryMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+                }}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-border hover:bg-muted"
+              ><ChevronRight className="h-4 w-4" /></button>
+            </div>
+
+            {/* Athlete selector */}
+            <div>
+              <label className="text-xs text-muted-foreground font-semibold mb-1 block">Sportiv (opțional)</label>
+              <select
+                value={historyAthleteId}
+                onChange={e => setHistoryAthleteId(e.target.value)}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">— Toți sportivii —</option>
+                {(athletes as any[]).map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.full_name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 text-xs">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-100 border border-blue-300 inline-block"/><span className="text-muted-foreground">Antrenament</span></span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-100 border border-amber-300 inline-block"/><span className="text-muted-foreground">Simulare (Sâm)</span></span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/><span className="text-muted-foreground">Prezent</span></span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-100 border border-dashed border-gray-300 inline-block opacity-50"/><span className="text-muted-foreground">Zi liberă</span></span>
+            </div>
+
+            {/* Calendar grid */}
+            {(() => {
+              const [y, m] = historyMonth.split('-').map(Number);
+              const firstDay = new Date(y, m - 1, 1);
+              const lastDay = new Date(y, m, 0).getDate();
+              // Day of week for first day (Mon=0)
+              const startDow = (firstDay.getDay() + 6) % 7;
+              const dayNames = ['Lu', 'Ma', 'Mi', 'Jo', 'Vi', 'Sâ', 'Du'];
+
+              // Maps: date string → attendance day id, entries
+              const dayMap = new Map((historyDays as any[]).map((d: any) => [d.date, d]));
+              const presentDates = new Set(
+                (historyEntries as any[]).map((e: any) => {
+                  const ad = (historyDays as any[]).find((d: any) => d.id === e.attendance_day_id);
+                  return ad?.date;
+                }).filter(Boolean)
+              );
+              const presentCountByDate = new Map<string, number>();
+              if (!historyAthleteId) {
+                (historyEntries as any[]).forEach((e: any) => {
+                  const ad = (historyDays as any[]).find((d: any) => d.id === e.attendance_day_id);
+                  if (ad?.date) presentCountByDate.set(ad.date, (presentCountByDate.get(ad.date) ?? 0) + 1);
+                });
+              }
+
+              const cells: (number | null)[] = [
+                ...Array(startDow).fill(null),
+                ...Array.from({ length: lastDay }, (_, i) => i + 1),
+              ];
+              // Pad to complete weeks
+              while (cells.length % 7 !== 0) cells.push(null);
+
+              return (
+                <div>
+                  {/* Day headers */}
+                  <div className="grid grid-cols-7 mb-1">
+                    {dayNames.map(dn => (
+                      <div key={dn} className="text-center text-[10px] font-bold text-muted-foreground py-1">{dn}</div>
+                    ))}
+                  </div>
+                  {/* Cells */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {cells.map((day, i) => {
+                      if (!day) return <div key={i} />;
+                      const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                      const dow = (new Date(y, m-1, day).getDay() + 6) % 7; // Mon=0
+                      const isTraining = dow === 0 || dow === 2 || dow === 3; // Mon, Wed, Thu
+                      const isSat = dow === 5;
+                      const isFreeDay = freeDays.includes(dateStr);
+                      const isToday = dateStr === today();
+                      const hasAttendanceDay = dayMap.has(dateStr);
+                      const isPresent = presentDates.has(dateStr);
+                      const count = presentCountByDate.get(dateStr);
+                      const isFuture = dateStr > today();
+
+                      let bg = '';
+                      let border = '';
+                      if (isFreeDay) { bg = 'bg-gray-50'; border = 'border-dashed border-gray-300 opacity-50'; }
+                      else if (isTraining) { bg = 'bg-blue-50'; border = 'border-blue-200'; }
+                      else if (isSat) { bg = 'bg-amber-50'; border = 'border-amber-200'; }
+                      else { bg = 'bg-background'; border = 'border-border/40'; }
+
+                      const isClickable = !isFreeDay && hasAttendanceDay && isPresent && !isFuture;
+                      const isLongPressable = isTraining || isSat;
+
+                      return (
+                        <CalendarCell
+                          key={dateStr}
+                          dateStr={dateStr}
+                          day={day}
+                          bg={bg}
+                          border={border}
+                          isToday={isToday}
+                          isFreeDay={isFreeDay}
+                          isPresent={isPresent}
+                          count={!historyAthleteId ? (count ?? 0) : 0}
+                          isClickable={isClickable}
+                          isLongPressable={isLongPressable}
+                          onClick={() => { if (isClickable) setSelectedDayDetail(dateStr); }}
+                          onLongPress={() => {
+                            if (isLongPressable) {
+                              setFreeDays(prev =>
+                                prev.includes(dateStr)
+                                  ? prev.filter(d => d !== dateStr)
+                                  : [...prev, dateStr]
+                              );
+                            }
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2 text-center">
+                    Apasă pe o zi cu prezențe pentru detalii · Ține apăsat 2s pentru zi liberă
+                  </p>
+                </div>
+              );
+            })()}
+
+            {/* Summary for selected athlete */}
+
+            {/* Day detail panel */}
+            {selectedDayDetail && (
+              <div className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+                  <div className="font-bold text-sm">
+                    {(() => {
+                      const [y, m, d] = selectedDayDetail.split('-').map(Number);
+                      const months = ['Ian','Feb','Mar','Apr','Mai','Iun','Iul','Aug','Sep','Oct','Noi','Dec'];
+                      const days = ['Dum','Lun','Mar','Mie','Joi','Vin','Sâm'];
+                      const dow = new Date(y, m-1, d).getDay();
+                      return `${days[dow]}, ${d} ${months[m-1]} ${y}`;
+                    })()}
+                  </div>
+                  <button onClick={() => setSelectedDayDetail(null)}
+                    className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground">
+                    <XIcon className="h-4 w-4" />
+                  </button>
+                </div>
+                {detailLoading && (
+                  <div className="px-4 py-6 text-center text-sm text-muted-foreground">Se încarcă...</div>
+                )}
+                {!detailLoading && detailData && (
+                  <div className="divide-y divide-border">
+                    {detailData.athletes.length === 0 && (
+                      <div className="px-4 py-4 text-sm text-muted-foreground">Nicio prezență înregistrată.</div>
+                    )}
+                    {detailData.athletes.map((a: any, i: number) => {
+                      const ms = a.result?.result_ms;
+                      const formatMs = (ms: number) => {
+                        const totalS = Math.floor(ms / 1000);
+                        const min = Math.floor(totalS / 60);
+                        const sec = totalS % 60;
+                        const cent = Math.floor((ms % 1000) / 10);
+                        return min > 0
+                          ? `${min}:${String(sec).padStart(2,'0')}.${String(cent).padStart(2,'0')}`
+                          : `${sec}.${String(cent).padStart(2,'0')}`;
+                      };
+                      return (
+                        <div key={a.id} className="flex items-center justify-between px-4 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm truncate">{a.full_name}</div>
+                            {a.default_race && a.default_race !== 'NONE' && (
+                              <div className="text-[10px] text-muted-foreground">{a.default_race}</div>
+                            )}
+                          </div>
+                          <div className="flex-shrink-0 text-right">
+                            {ms ? (
+                              <div>
+                                <span className="font-black tabular-nums text-base text-emerald-700">{formatMs(ms)}</span>
+                                {a.result?.is_simulation && (
+                                  <span className="ml-1.5 text-[9px] font-bold bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">SIM</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">fără timp</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {historyAthleteId && (() => {
+              const athlete = (athletes as any[]).find((a: any) => a.id === historyAthleteId);
+              const presentCount = (historyEntries as any[]).length;
+              const trainingDaysInMonth = (() => {
+                const [y, m] = historyMonth.split('-').map(Number);
+                const last = new Date(y, m, 0).getDate();
+                let count = 0;
+                for (let d = 1; d <= last; d++) {
+                  const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                  const dow = (new Date(y, m-1, d).getDay() + 6) % 7;
+                  const isTraining = dow === 0 || dow === 2 || dow === 3 || dow === 5;
+                  if (isTraining && !freeDays.includes(dateStr) && dateStr <= today()) count++;
+                }
+                return count;
+              })();
+
+              return (
+                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+                  <div className="font-bold text-sm">{athlete?.full_name}</div>
+                  <div className="flex gap-4 text-sm">
+                    <div>
+                      <div className="text-2xl font-black text-emerald-600">{presentCount}</div>
+                      <div className="text-xs text-muted-foreground">prezențe</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-muted-foreground">{trainingDaysInMonth}</div>
+                      <div className="text-xs text-muted-foreground">zile programate</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-blue-600">
+                        {trainingDaysInMonth > 0 ? Math.round(presentCount / trainingDaysInMonth * 100) : 0}%
+                      </div>
+                      <div className="text-xs text-muted-foreground">prezență</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+          </div>
+        </SheetContent>
+      </Sheet>
+
     </div>
   );
 }
