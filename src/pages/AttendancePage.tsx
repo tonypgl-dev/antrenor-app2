@@ -199,6 +199,8 @@ export default function AttendancePage() {
       .then(({ error }) => { if (error) console.warn('badges pref save:', error.message); });
   }, [showBadges, coach]);
   const [showBottomBtn, setShowBottomBtn] = useState(true);
+  const longPressTimer = useRef<Record<string, number>>({});
+  const [forcedCash, setForcedCash] = useState<Set<string>>(new Set());
   const lastScrollY = useRef(0);
   const scrollTimerRef = useRef<number | null>(null);
 
@@ -793,9 +795,9 @@ export default function AttendancePage() {
 
           return (
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
-              <div className="sticky top-[92px] z-[5] -mx-4 px-3 leading-none bg-background/20 backdrop-blur border-b border-border/20">
-                <div className={["font-black transition-all duration-200", letter === activeLetter ? "text-3xl text-foreground/80" : "text-base text-foreground/40"].join(" ")}>{letter}</div>
-              </div>
+               <div className="sticky top-[92px] z-[5] -mx-4 px-3 border-b border-border/30 bg-transparent">
+                 <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/35" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
+               </div>
 
               <div className="space-y-0.5 mt-1">
                 {list.map((athlete: any) => {
@@ -819,9 +821,12 @@ export default function AttendancePage() {
           return (
             <div
               key={athlete.id}
-              onClick={() => togglePresent.mutate(athlete)}
+               onClick={() => { if (!longPressTimer.current[athlete.id]) togglePresent.mutate(athlete); }}
+               onPointerDown={() => { longPressTimer.current[athlete.id] = window.setTimeout(() => { setForcedCash(s => { const n = new Set(s); n.add(athlete.id); return n; }); }, 2000); }}
+               onPointerUp={() => { window.clearTimeout(longPressTimer.current[athlete.id]); longPressTimer.current[athlete.id] = 0; }}
+               onPointerLeave={() => { window.clearTimeout(longPressTimer.current[athlete.id]); longPressTimer.current[athlete.id] = 0; }}
               className={[
-                "relative flex items-center justify-between rounded-md px-2 py-1.5 transition-all cursor-pointer active:scale-[0.99]",
+                "relative flex items-center justify-between rounded px-1.5 py-1 transition-all cursor-pointer active:scale-[0.99]",
                 isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
                 darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
                 darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
@@ -830,9 +835,9 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-[18px] font-semibold opacity-55 truncate leading-none mb-[-4px] relative z-10">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-[25px] font-semibold text-foreground/70 truncate leading-none mb-[-6px] relative z-10">{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[28px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
+                    <span className="text-[30px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
@@ -870,14 +875,14 @@ export default function AttendancePage() {
                   )}
                 </div>
 
-                {isPerSession && isPresent && !isPaidSession && (
+                {(isPerSession || forcedCash.has(athlete.id)) && isPresent && !isPaidSession && (
                   <Button
                     size="sm"
                     variant="default"
-                    className="h-6 px-2 text-xs font-bold"
+                    className="h-5 px-1.5 text-xs font-bold leading-none"
                     onClick={(e) => {
                       e.stopPropagation();
-                      paySession.mutate(athlete);
+                      paySession.mutate(athlete); setForcedCash(s => { const n = new Set(s); n.delete(athlete.id); return n; });
                     }}
                   >
                     80
@@ -891,7 +896,7 @@ export default function AttendancePage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-6 px-2 text-xs font-bold"
+                        className="h-5 px-1.5 text-xs font-bold leading-none"
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -905,7 +910,7 @@ export default function AttendancePage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-6 px-2 text-xs font-bold"
+                        className="h-5 px-1.5 text-xs font-bold leading-none"
                         disabled={renewSub.isPending}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -954,10 +959,10 @@ export default function AttendancePage() {
                   disabled={!has}
                   className={`w-7 flex-1 flex items-center justify-center rounded font-black transition-all duration-100 ${
                     !has
-                      ? 'opacity-20 text-foreground/30 text-[14px]'
+                      ? 'opacity-20 text-foreground/30 text-[12px]'
                       : isActive
                         ? 'text-foreground/90 text-[20px] scale-110'
-                        : 'text-foreground/60 text-[16px]'
+                        : 'text-foreground/60 text-[15px]'
                   }`}
                   onPointerDown={(e) => {
                     e.stopPropagation();
@@ -969,10 +974,9 @@ export default function AttendancePage() {
               );
             })}
           </div>
-          {/* Scroll to top arrow */}
           <button
             onPointerDown={(e) => { e.stopPropagation(); window.scrollTo({ top: 0, behavior: 'auto' }); }}
-            className="mt-0.5 w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full transition-all active:scale-90 active:opacity-60 mx-auto"
+            className="mt-0.5 w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full mx-auto transition-all active:scale-90 active:opacity-60"
             style={{ background: 'linear-gradient(180deg,#374151 0%,#1f2937 100%)', boxShadow: '0 1px 0 #111827, inset 0 1px 0 rgba(255,255,255,0.12)' }}
             title="Înapoi sus"
           >
