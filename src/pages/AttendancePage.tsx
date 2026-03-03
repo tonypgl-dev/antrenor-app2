@@ -100,7 +100,7 @@ function getSubStatus(expiresISO?: string | null): SubStatus {
 }
 
 function statusTextClass(s: SubStatus) {
-  if (s === 'valid') return 'text-emerald-600';
+  if (s === 'valid') return 'text-emerald-500';
   if (s === 'expiring') return 'text-orange-500';
   if (s === 'expired') return 'text-rose-600';
   return 'text-muted-foreground';
@@ -181,13 +181,7 @@ export default function AttendancePage() {
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [renewSheet, setRenewSheet] = useState<{ athleteId: string; athleteName: string } | null>(null);
   const [showNeedsAttention, setShowNeedsAttention] = useState(true);
-  const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(() =>
-    localStorage.getItem('needs_attention_dismissed_date') === today()
-  );
-  const dismissNeedsAttention = () => {
-    localStorage.setItem('needs_attention_dismissed_date', today());
-    setNeedsAttentionDismissed(true);
-  };
+  const [needsAttentionDismissed, setNeedsAttentionDismissed] = useState(false);
   const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [showBadges, setShowBadges] = useState(() => localStorage.getItem('attendance_show_badges') !== 'false');
@@ -565,20 +559,21 @@ export default function AttendancePage() {
 
   return (
     <div className={["pb-24 min-h-screen transition-colors duration-200", darkMode ? "bg-[#1a1f2e] text-[#e2e8f0]" : ""].join(" ")}>
+      <div className={["sticky top-0 z-20 backdrop-blur border-b border-border/40", darkMode ? "bg-[#1a1f2e]/95" : "bg-background/95"].join(" ")}>
       <div className="relative">
-        <div className="px-4 pt-4 pb-3">
-          <div className="flex items-center gap-3">
+        <div className="px-3 pt-2 pb-1">
+          <div className="flex items-center gap-2">
             {/* Avatar placeholder */}
-            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border">
-              <span className="text-lg font-bold text-muted-foreground">
+            <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center flex-shrink-0 border border-border">
+              <span className="text-sm font-bold text-muted-foreground">
                 {String(coach ?? '?')[0].toUpperCase()}
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xl font-bold leading-tight">
+              <div className="text-base font-bold leading-tight">
                 Prezență {formatDateRo(today())}
               </div>
-              <div className="text-sm text-muted-foreground font-medium">
+              <div className="text-xs text-muted-foreground font-medium">
                 {coach ?? ''}
                 {presentCount > 0 && <>
                   {count1000 > 0 && <> · {count1000}×1000m</>}
@@ -590,50 +585,35 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
-        <div className="absolute right-3 top-3 flex items-center gap-1">
-          {needsAttention.length > 0 && needsAttentionDismissed && (
-            <button
-              type="button"
-              onClick={() => {
-                setNeedsAttentionDismissed(false);
-                localStorage.removeItem('needs_attention_dismissed_date');
-                setShowNeedsAttention(true);
-              }}
-              className="h-9 w-7 flex items-center justify-center text-muted-foreground/50 hover:text-warning transition-colors"
-              title="Arată 'Necesită atenție'"
-            >
-              <span className="text-lg font-black leading-none">!</span>
-            </button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9"
-            onClick={() => setSettingsOpen(true)}
-            title="Setări listă"
-          >
-            <Settings className="h-5 w-5" />
-          </Button>
-        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute right-3 top-3 h-9 w-9"
+          onClick={() => setSettingsOpen(true)}
+          title="Setări listă"
+        >
+          <Settings className="h-5 w-5" />
+        </Button>
       </div>
       {/* Search bar */}
-      <div className="px-4 pb-2">
+      <div className="px-3 pb-1.5">
         <div className="relative">
           <input
             type="search"
             placeholder="Caută sportiv..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-border bg-muted/40 px-4 py-2 text-sm pl-8 outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-sm pl-7 outline-none focus:ring-2 focus:ring-primary/30"
           />
-          <span className="absolute left-2.5 top-2.5 text-muted-foreground text-xs">🔍</span>
+          <span className="absolute left-2 top-2 text-muted-foreground text-xs">🔍</span>
           {searchQuery && (
             <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-2 text-muted-foreground text-lg leading-none">×</button>
           )}
         </div>
       </div>
 
+      </div>
       {needsAttention.length > 0 && !needsAttentionDismissed && (
         <div className={["mx-0 mb-2 border-b border-warning/30 bg-warning/5 overflow-hidden transition-all", showNeedsAttention ? "sticky top-0 z-10 backdrop-blur" : ""].join(" ")}>
           <div className="flex items-center gap-1 px-3 py-2 flex-wrap">
@@ -653,7 +633,7 @@ export default function AttendancePage() {
                 </>;
               })()}
             </div>
-            <button onClick={() => dismissNeedsAttention()}
+            <button onClick={() => setNeedsAttentionDismissed(true)}
               className="ml-1 flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full text-warning/60 hover:text-warning hover:bg-warning/10 text-base leading-none">
               ×
             </button>
@@ -727,7 +707,7 @@ export default function AttendancePage() {
         </div>
       )}
 
-      <div className="px-4 space-y-3">
+      <div className="px-2 space-y-2">
         {LETTERS.map((letter) => {
           const list = grouped.get(letter) ?? [];
           if (list.length === 0) return null;
@@ -738,7 +718,7 @@ export default function AttendancePage() {
                 <div className="text-xl font-bold text-foreground/80">{letter}</div>
               </div>
 
-              <div className="space-y-px mt-0.5">
+              <div className="space-y-0.5 mt-1">
                 {list.map((athlete: any) => {
           const isPresent = athlete.entry?.present;
           const isPaidSession = athlete.entry?.session_paid;
@@ -762,7 +742,7 @@ export default function AttendancePage() {
               key={athlete.id}
               onClick={() => togglePresent.mutate(athlete)}
               className={[
-                "relative flex items-center justify-between rounded px-2 py-1.5 transition-all cursor-pointer active:scale-[0.99]",
+                "relative flex items-center justify-between rounded px-1.5 py-1 transition-all cursor-pointer active:scale-[0.99]",
                 isPresent ? "athlete-row-present" : active ? "athlete-row-should-present" : "athlete-row-default",
                 darkMode && isPresent ? "!bg-[#1e3a2e] !border !border-emerald-700/40" : "",
                 darkMode && !isPresent && active ? "!bg-[#1e2a3a] !border !border-blue-700/30" : "",
@@ -771,9 +751,9 @@ export default function AttendancePage() {
             >
               <div className="min-w-0 flex-1">
                 <div className="uppercase text-foreground/80 font-hand font-bold leading-tight">
-                  <span className="block text-[15px] font-semibold opacity-60 truncate leading-none mb-0.5">{String(firstNames ?? '').toUpperCase()}</span>
+                  <span className="block text-[17px] font-semibold opacity-55 truncate leading-none">{String(firstNames ?? '').toUpperCase()}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[28px] font-black tracking-wide leading-none">{String(lastName ?? '').toUpperCase()}</span>
+                    <span className="text-[26px] font-black tracking-wide leading-none -mt-0.5">{String(lastName ?? '').toUpperCase()}</span>
                     {!isPerSession && cStatus === 'expired' && (
                       <span className="text-rose-500 text-2xl font-black flex-shrink-0 leading-none">!</span>
                     )}
@@ -796,7 +776,7 @@ export default function AttendancePage() {
 
               <div className="flex items-center gap-2">
                 <div
-                  className="text-right text-[11px] leading-tight tabular-nums font-semibold"
+                  className="text-right text-[14px] leading-tight tabular-nums font-semibold"
                   onClick={(e) => {
                     e.stopPropagation();
                     setRenewSheet({ athleteId: athlete.id, athleteName: athlete.full_name });
@@ -892,12 +872,12 @@ export default function AttendancePage() {
                   key={l}
                   type="button"
                   disabled={!has}
-                  className={`w-6 h-4 flex items-center justify-center rounded text-[11px] font-bold transition ${
+                  className={`w-7 flex items-center justify-center rounded font-bold transition-all duration-100 ${
                     !has
-                      ? 'opacity-25'
+                      ? 'opacity-20 text-[13px] h-4'
                       : isActive
-                        ? 'text-primary scale-125'
-                        : 'text-foreground/70 hover:text-foreground'
+                        ? 'text-primary text-[22px] h-7 scale-110'
+                        : 'text-foreground/60 text-[14px] h-4'
                   }`}
                   onClick={(e) => {
                     e.preventDefault();
@@ -1117,7 +1097,7 @@ return;
               <button type="button" onClick={() => setDarkMode(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   darkMode ? "border-blue-500 bg-[#1a1f2e] text-[#e2e8f0]" : "border-border bg-background text-foreground"].join(" ")}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xl">{darkMode ? "🌙" : "☀️"}</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{darkMode ? "Dark" : "Light"}</div>
@@ -1134,7 +1114,7 @@ return;
               <button type="button" onClick={() => setShowBadges(v => !v)}
                 className={["flex items-center justify-between w-full rounded-xl border-2 px-4 py-3 transition-colors",
                   showBadges ? "border-emerald-500 bg-emerald-50" : "border-border bg-background"].join(" ")}>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <span className="text-xl">🏅</span>
                   <div className="text-left">
                     <div className="text-sm font-bold">{showBadges ? "Badge-uri vizibile" : "Badge-uri ascunse"}</div>
