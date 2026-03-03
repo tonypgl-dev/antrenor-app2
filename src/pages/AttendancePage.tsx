@@ -799,11 +799,13 @@ export default function AttendancePage() {
 
           return (
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
+               {letter !== 'A' && (
                <div className="sticky top-[92px] z-[5] -mx-4 px-3 border-b border-border/30 bg-transparent text-center">
                  <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/40" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
                </div>
+               )}
 
-              <div className="space-y-0.5 mt-1">
+              <div className="space-y-0.5">
                 {list.map((athlete: any) => {
           const isPresent = athlete.entry?.present;
           const isPaidSession = athlete.entry?.session_paid;
