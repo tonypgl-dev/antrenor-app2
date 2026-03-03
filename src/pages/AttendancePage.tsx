@@ -189,7 +189,7 @@ export default function AttendancePage() {
   const [dismissedAttentionIds, setDismissedAttentionIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [showBadges, setShowBadges] = useState(() => localStorage.getItem('attendance_show_badges') !== 'false');
-  const [hideValidSubs, setHideValidSubs] = useState(() => localStorage.getItem('attendance_hide_valid_subs') === 'true');
+  const [hideValidSubs, setHideValidSubs] = useState(() => localStorage.getItem('attendance_hide_valid_subs') !== 'false');
   useEffect(() => {
     localStorage.setItem('attendance_show_badges', String(showBadges));
     if (!coach) return;
@@ -597,7 +597,7 @@ export default function AttendancePage() {
 
   return (
     <>
-    <style>{`@keyframes exclamFlash { 0%,100% { color: rgb(156 163 175 / 0.4); } 50% { color: rgb(239 68 68); } }`}</style>
+    <style>{`@keyframes exclamFlash { 0%,100% { color: rgb(156 163 175 / 0.4); } 50% { color: rgb(249 115 22); } }`}</style>
     <div className={["pb-24 min-h-screen transition-colors duration-200", darkMode ? "bg-[#1a1f2e] text-[#e2e8f0]" : ""].join(" ")}>
       <div className={["sticky top-0 z-30 border-b border-border/40 backdrop-blur", darkMode ? "bg-[#1a1f2e]/95" : "bg-background/95"].join(" ")}>
       <div className="relative">
@@ -626,18 +626,22 @@ export default function AttendancePage() {
           </div>
         </div>
         <div className="absolute right-2 top-1.5 flex items-center gap-0.5">
-          {/* Hide valid subs toggle */}
+          {/* AB toggle: ON=show subs, OFF=hide subs */}
           <button
             type="button"
             onClick={() => setHideValidSubs(v => !v)}
-            className={["flex items-center h-8 px-1.5 rounded-lg transition-colors gap-1",
-              hideValidSubs ? "text-primary" : "text-muted-foreground/40 hover:text-muted-foreground"
-            ].join(" ")}
-            title={hideValidSubs ? "Afișează toate abonamentele" : "Ascunde abonamentele valabile"}
+            className="flex items-center h-8 px-1.5 gap-1.5"
+            title={hideValidSubs ? "Afișează abonamentele valabile" : "Ascunde abonamentele valabile"}
           >
-            <span className="text-[9px] font-bold leading-none">AB</span>
-            <div className={["w-8 h-4 rounded-full relative transition-colors flex-shrink-0", hideValidSubs ? "bg-primary" : "bg-muted-foreground/25"].join(" ")}>
-              <div className={["absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform", hideValidSubs ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+            <span className={["text-[9px] font-bold leading-none transition-colors", hideValidSubs ? "text-muted-foreground/35" : "text-foreground/60"].join(" ")}>AB</span>
+            <div className={["w-9 h-5 rounded-full relative transition-all duration-200 flex-shrink-0",
+              hideValidSubs
+                ? "bg-foreground/15 shadow-inner"
+                : "bg-foreground/30 shadow-[inset_0_1px_3px_rgba(0,0,0,0.25),0_1px_0_rgba(255,255,255,0.15)]"
+            ].join(" ")}>
+              <div className={["absolute top-0.5 w-4 h-4 rounded-full transition-all duration-200 bg-gradient-to-b from-white to-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.8)]",
+                hideValidSubs ? "translate-x-0.5" : "translate-x-[18px]"
+              ].join(" ")} />
             </div>
           </button>
           {/* ! icon — always visible when needs attention has items */}
@@ -662,7 +666,7 @@ export default function AttendancePage() {
               ].join(" ")}
               title="Arată 'Necesită atenție'"
             >
-              <span className="text-lg font-black leading-none">!</span>
+              <span className="text-2xl font-black leading-none">!</span>
             </button>
           )}
           <Button
@@ -795,8 +799,8 @@ export default function AttendancePage() {
 
           return (
             <div key={letter} ref={(el) => (sectionRefs.current[letter] = el)}>
-               <div className="sticky top-[92px] z-[5] -mx-4 px-3 border-b border-border/30 bg-transparent">
-                 <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/35" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
+               <div className="sticky top-[92px] z-[5] -mx-4 px-3 border-b border-border/30 bg-transparent text-center">
+                 <div className={["font-black transition-all duration-150 leading-none", letter === activeLetter ? "text-7xl py-1 text-foreground/40" : "text-[9px] text-foreground/25 py-0"].join(" ")}>{letter}</div>
                </div>
 
               <div className="space-y-0.5 mt-1">
